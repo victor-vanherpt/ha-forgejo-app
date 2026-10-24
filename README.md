@@ -16,7 +16,7 @@ then `mise tasks` to see what's available:
 | `mise run forgejo:pin [version]` | Pin Forgejo to the latest stable release (or `version`), update checksums and architectures, then bump |
 | `mise run bump` | Set the app version for the next commit on `main` |
 | `mise run version:check [--base ref]` | Check the version and changelog (CI runs this) |
-| `mise run version:pr [branch]` | Print the PR prerelease version, `<version>-pr-<branch>` |
+| `mise run version:pr [branch] [--sha sha] [--slug]` | Print the PR prerelease version, `<version>-pr-<branch>-<short sha>` |
 | `mise run lint` | hadolint, shellcheck, yamllint, actionlint, translation keys |
 | `mise run build [arch]` | Build `local/forgejo:latest` for `aarch64` or `amd64` |
 | `mise run test [image] [--db sqlite3\|postgres\|mysql]` | Smoke test an image against a mocked Supervisor |
@@ -59,12 +59,15 @@ Assistant supports (`aarch64`, `amd64`).
 ### PR prereleases
 
 Every push to a PR from this repository publishes a prerelease
-`<version>-pr-<branch>` (e.g. `17.0.0-3-pr-my-change`, see
-`mise run version:pr`):
+`<version>-pr-<branch>-<short sha>`, e.g. `17.0.0-3-pr-colleccio-a8aa8e0` for
+branch `col·lecció` (see `mise run version:pr`). The branch name is
+transliterated to ASCII (accents dropped, `ß`→`ss`, `l·l`→`ll`, ...), then
+limited to `a-z`, `0-9`, `.` and `-`; the commit hash keeps versions unique.
+Each push gives a new version, so Home Assistant offers it as an update.
 
 - images tagged with that version,
-- a `pr/<branch>` branch holding just the Home Assistant repository with that
-  version, and
+- a `pr/<branch>` branch (same name for the whole PR) holding just the Home
+  Assistant repository with that version, and
 - a GitHub prerelease explaining how to install it.
 
 To test a PR in Home Assistant, add

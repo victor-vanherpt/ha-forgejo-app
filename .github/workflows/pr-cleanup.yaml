@@ -33,34 +33,37 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@v5.2.2
         with:
-          install_args: jq yq
+          install_args: jq yq python
 
       - name: Find prerelease
         id: pr
-        run: |
-          version=$(mise run -q version:pr "${GITHUB_HEAD_REF}")
-          echo "suffix=-pr-${version#*-pr-}" >> "$GITHUB_OUTPUT"
+        run: echo "slug=$(mise run -q version:pr "${GITHUB_HEAD_REF}" --slug)" >> "$GITHUB_OUTPUT"
 
+      # Prerelease versions are <version>-pr-<slug>-<short sha>
       - name: Delete GitHub prereleases
         env:
-          SUFFIX: ${{ steps.pr.outputs.suffix }}
+          SLUG: ${{ steps.pr.outputs.slug }}
         run: |
           gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | awk -v suffix="${SUFFIX}" 'substr($0, length($0) - length(suffix) + 1) == suffix' \
+            | awk -v want="-pr-${SLUG}" '{
+                n = length($0); head = substr($0, 1, n - 8); tail = substr($0, n - 7)
+                if (n > 8 && tail ~ /^-[0-9a-f]+$/ && length(tail) == 8 &&
+                    substr(head, length(head) - length(want) + 1) == want) print
+              }' \
             | xargs -r -n 1 gh release delete --cleanup-tag --yes
 
       - name: Delete Home Assistant repository branch
         env:
-          SUFFIX: ${{ steps.pr.outputs.suffix }}
+          SLUG: ${{ steps.pr.outputs.slug }}
         run: |
-          branch="pr/${SUFFIX#-pr-}"
+          branch="pr/${SLUG}"
           if gh api "repos/${GH_REPO}/git/refs/heads/${branch}" > /dev/null 2>&1; then
             gh api -X DELETE "repos/${GH_REPO}/git/refs/heads/${branch}"
           fi
 
       - name: Delete images
         env:
-          SUFFIX: ${{ steps.pr.outputs.suffix }}
+          SLUG: ${{ steps.pr.outputs.slug }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
           name=${image##*/}
@@ -72,9 +75,10 @@ jobs:
           fi
           for package in "${name}" $(yq '.arch[]' forgejo/config.yaml | sed "s/\$/-${name}/"); do
             # Versions whose every tag is a prerelease tag of this PR
-            ids=$(gh api --paginate "${base}/${package}/versions" \
-              --jq ".[] | select(.metadata.container.tags | length > 0)
-                        | select(all(.metadata.container.tags[]; endswith(\"${SUFFIX}\"))) | .id") || {
+            ids=$(gh api --paginate "${base}/${package}/versions" --jq "
+              def pr_tag: (.[:-8] | endswith(\"-pr-${SLUG}\")) and (.[-8:] | test(\"^-[0-9a-f]{7}\$\"));
+              .[] | select(.metadata.container.tags | length > 0)
+                  | select(all(.metadata.container.tags[]; pr_tag)) | .id") || {
               echo "::warning::Could not list versions of ${package}"
               continue
             }

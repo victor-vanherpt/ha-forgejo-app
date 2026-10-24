@@ -5,9 +5,11 @@ actionlint = "1.7.12"
 hadolint = "2.15.1"
 jq = "1.8.2"
 "pipx:yamllint" = "1.38.0"
+python = "3.13.17"
 shellcheck = "0.11.0"
 uv = "0.13.5"
 yq = "4.54.1"
 
 [settings]
 pipx.uvx = true
+python.precompiled_flavor = "install_only_stripped"

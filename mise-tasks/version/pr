@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Print the prerelease version for a PR branch: <version>-pr-<branch>"
+#MISE description="Print the prerelease version for a PR: <version>-pr-<branch>-<short sha>"
 #USAGE arg "[branch]" help="PR branch name (default: current branch)" default=""
+#USAGE flag "--sha <sha>" help="PR head commit (default: HEAD)"
+#USAGE flag "--slug" help="Print only the cleaned-up branch name"
 set -euo pipefail
 
 # shellcheck source=mise-tasks/lib/version.sh
@@ -9,8 +11,14 @@ cd "${MISE_PROJECT_ROOT}"
 
 branch=${usage_branch:-$(git branch --show-current)}
 slug=$(pr_slug "${branch}")
-if [[ -z "${slug}" ]]; then
-  echo "Branch name '${branch}' has no usable characters" >&2
-  exit 1
+if [[ "${usage_slug:-false}" == "true" ]]; then
+  echo "${slug}"
+  exit 0
 fi
-echo "$(app_version)-pr-${slug}"
+
+# A full SHA is used as given (CI's shallow checkout may not contain it)
+sha=${usage_sha:-HEAD}
+if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+  sha=$(git rev-parse "${sha}")
+fi
+echo "$(app_version)-pr-${slug}-${sha:0:7}"
