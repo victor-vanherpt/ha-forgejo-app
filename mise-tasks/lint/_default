@@ -5,7 +5,7 @@ set -euo pipefail
 cd "${MISE_PROJECT_ROOT}"
 
 hadolint forgejo/Dockerfile
-grep -rlE '^#!.*(bash|bashio)' forgejo/rootfs mise-tasks | xargs shellcheck -x
+grep -rlE "^#!.*(bash|bashio)" forgejo/rootfs mise-tasks | xargs shellcheck -x
 yamllint --strict .
 actionlint
 

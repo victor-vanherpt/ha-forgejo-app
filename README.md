@@ -17,11 +17,16 @@ then `mise tasks` to see what's available:
 | `mise run bump` | Set the app version for the next commit on `main` |
 | `mise run version:check [--base ref]` | Check the version and changelog (CI runs this) |
 | `mise run version:pr <number>` | Print the PR prerelease version, `<version>-pr-<number>-<commits>-<short sha>` |
+| `mise run ci [--native]` | Run the CI pipeline locally; do this before pushing |
 | `mise run lint` | hadolint, shellcheck, yamllint, actionlint, translation keys |
-| `mise run build [arch]` | Build `local/forgejo:latest` for `aarch64` or `amd64` |
-| `mise run test [image] [--db sqlite3\|postgres\|mysql]` | Smoke test an image against a mocked Supervisor |
+| `mise run lint:app` | Home Assistant's app linter, same release as CI (needs Docker) |
+| `mise run build [arch]` | Build `local/forgejo:<arch>` for `aarch64` or `amd64` |
+| `mise run test [image] [--db sqlite3\|postgres\|mysql]` | Smoke test an image (default `local/forgejo:<host arch>`) against a mocked Supervisor |
 
-Tasks are scripts in [`mise-tasks/`](mise-tasks).
+Tasks are scripts in [`mise-tasks/`](mise-tasks). `mise run ci` runs the
+same checks as CI (everything except publishing): lint, the app linter, the
+version check, and a build and smoke test per architecture. Architectures
+other than your machine's are emulated, which is slow; `--native` skips them.
 
 ### Versions
 

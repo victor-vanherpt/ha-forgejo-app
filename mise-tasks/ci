@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#MISE description="Run the CI pipeline locally before pushing: lint, app lint, version, build and smoke tests"
+#USAGE flag "--native" help="Only build and test the host architecture (skip emulated builds)"
+set -euo pipefail
+
+# shellcheck source=mise-tasks/lib/version.sh
+source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
+cd "${MISE_PROJECT_ROOT}"
+
+step() {
+  printf '\n\033[1m==> %s\033[0m\n' "$*"
+}
+
+case "$(uname -m)" in
+  aarch64 | arm64) host_arch=aarch64 ;;
+  *) host_arch=amd64 ;;
+esac
+
+step "Lint"
+mise run lint
+
+step "Lint app (Home Assistant app linter)"
+mise run lint:app
+
+# Same check as CI: a PR must carry the version main gets after a squash merge;
+# a push to main must be the release commit itself.
+if [[ "$(git branch --show-current)" == "main" ]]; then
+  step "Version (release commit)"
+  mise run version:check
+else
+  step "Version (pull request into origin/main)"
+  git fetch --quiet origin main
+  mise run version:check --base origin/main
+fi
+
+# CI builds every architecture natively and runs SQLite tests on each, plus
+# PostgreSQL and MariaDB on amd64. Locally, the extra databases run on the host
+# architecture, since other architectures are emulated and slow.
+for arch in $(yq '.arch[]' "${CONFIG}"); do
+  if [[ "${usage_native:-false}" == "true" && "${arch}" != "${host_arch}" ]]; then
+    echo "Skipping ${arch} (--native)"
+    continue
+  fi
+
+  step "Build ${arch}"
+  mise run build "${arch}"
+
+  step "Smoke test ${arch} (SQLite)"
+  mise run test "local/forgejo:${arch}"
+
+  if [[ "${arch}" == "${host_arch}" ]]; then
+    for db in postgres mysql; do
+      step "Smoke test ${arch} (${db})"
+      mise run test --db "${db}" "local/forgejo:${arch}"
+    done
+  fi
+done
+
+step "All CI checks passed"
+echo "Not simulated: publishing images, prereleases and releases (they need GitHub)."

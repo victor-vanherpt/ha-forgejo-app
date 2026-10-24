@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #MISE description="Smoke test an app image: boot, health check, git push over HTTP, SSH banner, restart"
-#USAGE arg "[image]" help="Image to test" default="local/forgejo:latest"
+#USAGE arg "[image]" help="Image to test (default: local/forgejo:<host arch>, see mise run build)" default=""
 #USAGE flag "--db <db>" help="Database to test against" default="sqlite3" {
 #USAGE   choices "sqlite3" "postgres" "mysql"
 #USAGE }
 set -euo pipefail
 
-image=${usage_image:-local/forgejo:latest}
+case "$(uname -m)" in
+  aarch64 | arm64) host_arch=aarch64 ;;
+  *) host_arch=amd64 ;;
+esac
+image=${usage_image:-local/forgejo:${host_arch}}
 db=${usage_db:-sqlite3}
 name="forgejo-test-$$"
 work=$(mktemp -d)
