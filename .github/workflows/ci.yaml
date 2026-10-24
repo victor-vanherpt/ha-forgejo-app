@@ -1,7 +1,10 @@
 name: CI
 
+# pull_request_target runs this workflow as it is on main, never a PR's copy, so
+# workflow changes only run once reviewed and merged. The PR's code is checked
+# out explicitly; PRs that change CI tooling wait for approval (see Gate).
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
   push:
@@ -9,22 +12,76 @@ on:
       - main
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 permissions:
   contents: read
 
+env:
+  # The PR's head commit, or the pushed commit on main
+  REF: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
-  lint:
-    name: Lint
+  gate:
+    name: Gate
     # Only PRs opened from branches in this repository are built; forks are not
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      approval: ${{ steps.files.outputs.approval }}
+    steps:
+      # Changes to code CI runs outside the app (workflows, mise config and
+      # tasks) need approval through the protected ci-approval environment.
+      - name: Check for CI tooling changes
+        id: files
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          changed=$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
+            | { grep -E '^(\.github/|\.?mise|\.config/mise|\.tool-versions$)' || true; })
+          if [[ -z "${changed}" ]]; then
+            echo "approval=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::notice::This PR changes CI tooling, so it needs approval: $(echo "${changed}" | paste -sd ' ' -)"
+          # Fail closed: an unprotected environment would let the run through
+          reviewers=$(gh api "repos/${GH_REPO}/environments/ci-approval" \
+            --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2> /dev/null || echo 0)
+          if [[ "${reviewers}" == "0" ]]; then
+            echo "::error::Environment ci-approval is missing or has no required reviewers (see README)"
+            exit 1
+          fi
+          echo "approval=true" >> "$GITHUB_OUTPUT"
+
+  approval:
+    name: Approval
+    needs: gate
+    if: needs.gate.outputs.approval == 'true'
+    runs-on: ubuntu-latest
+    environment: ci-approval
+    steps:
+      - name: Approved
+        run: echo "CI tooling changes approved"
+
+  lint:
+    name: Lint
+    needs: [gate, approval]
+    if: >-
+      ${{ !cancelled() && needs.gate.result == 'success'
+      && contains(fromJSON('["success", "skipped"]'), needs.approval.result) }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Set up mise
@@ -40,8 +97,10 @@ jobs:
 
   version:
     name: Version
-    # Only PRs opened from branches in this repository are built; forks are not
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: [gate, approval]
+    if: >-
+      ${{ !cancelled() && needs.gate.result == 'success'
+      && contains(fromJSON('["success", "skipped"]'), needs.approval.result) }}
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.release.outputs.release }}
@@ -49,6 +108,7 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ env.REF }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -58,7 +118,7 @@ jobs:
           install_args: jq yq
 
       - name: Check version (pull request)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         run: mise run version:check --base "origin/${GITHUB_BASE_REF}"
 
       - name: Check version (release commit)
@@ -80,6 +140,7 @@ jobs:
   prepare:
     name: Prepare
     needs: version
+    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
@@ -93,6 +154,7 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Set up mise
@@ -111,7 +173,7 @@ jobs:
           RELEASE: ${{ needs.version.outputs.release }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
             version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}" --commits "${PR_COMMITS}")
             tags=${version}
             publish=true
@@ -142,6 +204,7 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}
     needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -156,6 +219,7 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Build image
@@ -201,7 +265,9 @@ jobs:
   publish:
     name: Publish
     needs: [lint, prepare, build]
-    if: needs.prepare.outputs.publish == 'true'
+    if: >-
+      ${{ !cancelled() && needs.lint.result == 'success' && needs.build.result == 'success'
+      && needs.prepare.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -219,7 +285,7 @@ jobs:
   release:
     name: Release
     needs: [prepare, publish]
-    if: github.event_name == 'push'
+    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -227,6 +293,7 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Create GitHub release
@@ -248,7 +315,7 @@ jobs:
   prerelease:
     name: Prerelease
     needs: [prepare, publish]
-    if: github.event_name == 'pull_request'
+    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event_name == 'pull_request_target' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -263,6 +330,7 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       # A branch with only what Home Assistant reads (repository.yaml and the

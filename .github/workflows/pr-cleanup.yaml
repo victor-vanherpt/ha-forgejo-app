@@ -1,9 +1,9 @@
 name: PR cleanup
 
 # Remove a PR's prerelease (GitHub release, pr/<number> branch and images)
-# once it is merged or closed.
+# once it is merged or closed. pull_request_target: runs as defined on main.
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
     types:
