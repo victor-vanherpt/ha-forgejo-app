@@ -290,7 +290,7 @@ jobs:
         run: |
           # One prerelease per PR: drop earlier ones (<version>-pr-<number>-<commits>-<sha>)
           gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | { grep -E -- "-pr-${PR_NUMBER}-[0-9]+-[0-9a-f]{7}$" || true; } \
+            | { grep -E -- "-pr-${PR_NUMBER}-[0-9]{3,}-[0-9a-f]{7}$" || true; } \
             | xargs -r -n 1 gh release delete --cleanup-tag --yes
           gh release create "${VERSION}" \
             --prerelease \

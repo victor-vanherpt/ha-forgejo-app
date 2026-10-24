@@ -59,9 +59,9 @@ Assistant supports (`aarch64`, `amd64`).
 ### PR prereleases
 
 Every push to a PR from this repository publishes a prerelease
-`<version>-pr-<number>-<commits>-<short sha>`, e.g. `17.0.0-3-pr-12-4-a8aa8e0`
-for the 4th commit of PR #12 (see `mise run version:pr`). The commit count
-makes a PR's prereleases sort in order; each push is a new version, so Home
+`<version>-pr-<number>-<commits>-<short sha>`, e.g. `17.0.0-3-pr-12-004-a8aa8e0`
+for the 4th commit of PR #12 (see `mise run version:pr`). The zero-padded
+commit count makes a PR's prereleases sort in order; each push is a new version, so Home
 Assistant offers it as an update.
 
 - images tagged with that version,

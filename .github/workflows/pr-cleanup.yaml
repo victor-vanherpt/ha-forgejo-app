@@ -40,7 +40,7 @@ jobs:
       - name: Delete GitHub prereleases
         run: |
           gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | { grep -E -- "-pr-${PR_NUMBER}-[0-9]+-[0-9a-f]{7}$" || true; } \
+            | { grep -E -- "-pr-${PR_NUMBER}-[0-9]{3,}-[0-9a-f]{7}$" || true; } \
             | xargs -r -n 1 gh release delete --cleanup-tag --yes
 
       - name: Delete Home Assistant repository branch
@@ -63,7 +63,7 @@ jobs:
           for package in "${name}" $(yq '.arch[]' forgejo/config.yaml | sed "s/\$/-${name}/"); do
             # Versions whose every tag is a prerelease tag of this PR
             ids=$(gh api --paginate "${base}/${package}/versions" --jq "
-              def pr_tag: test(\"-pr-${PR_NUMBER}-[0-9]+-[0-9a-f]{7}\$\");
+              def pr_tag: test(\"-pr-${PR_NUMBER}-[0-9]{3,}-[0-9a-f]{7}\$\");
               .[] | select(.metadata.container.tags | length > 0)
                   | select(all(.metadata.container.tags[]; pr_tag)) | .id") || {
               echo "::warning::Could not list versions of ${package}"

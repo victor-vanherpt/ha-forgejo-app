@@ -32,4 +32,5 @@ if [[ ! "${commits}" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-echo "$(app_version)-pr-${number}-${commits}-${sha:0:7}"
+# Zero-padded so prereleases also sort correctly as plain text
+printf '%s-pr-%s-%03d-%s\n' "$(app_version)" "${number}" "$((10#${commits}))" "${sha:0:7}"
