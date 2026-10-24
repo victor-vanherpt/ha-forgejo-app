@@ -49,9 +49,15 @@ Assistant supports (`aarch64`, `amd64`).
 
 ### CI
 
-[`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) runs on every PR and on
-`main`:
+[`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) runs on every PR opened
+from a branch in this repository (not forks) and on `main`. It is triggered by
+`pull_request_target`, so it always runs **as defined on `main`**: workflow
+changes in a PR don't run until the PR is reviewed and merged (check them with
+`mise run ci` before pushing). The PR's code is checked out explicitly.
 
+0. **Gate**: if the PR changes CI tooling (`.github/`, mise config or
+   `mise-tasks/`), the run waits for approval in the `ci-approval` environment
+   before anything else runs. Other PRs run straight away.
 1. **Lint**: `mise run lint` and the Home Assistant app linter
 2. **Version**: `mise run version:check`
 3. **Build**: per architecture on native runners, then smoke tests (SQLite on
@@ -87,6 +93,10 @@ the branch and the images. PRs from forks are not built at all.
   `ha-forgejo-app`, `aarch64-ha-forgejo-app` and `amd64-ha-forgejo-app`
   packages public (GitHub → Packages → Package settings), or Home Assistant
   can't pull them.
+- Environments → **New environment** `ci-approval`: add yourself under
+  **Required reviewers**, and leave **Prevent self-review** unchecked so you
+  can approve your own PRs. Without it, PRs that change CI tooling fail at
+  **Gate** instead of running unapproved.
 - General → Pull requests: allow **squash merging** only.
 - Rulesets for `main`: require a pull request, require the status checks
   **Lint**, **Version**, **Build aarch64** and **Build amd64**, and require
