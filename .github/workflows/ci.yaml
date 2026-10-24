@@ -231,16 +231,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up mise
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          install_args: jq yq
+
+      # Changelog notes, the published image digests, how to verify the cosign
+      # signature, and the upstream Forgejo checksums
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          awk -v heading="## ${VERSION}" '
-            $0 == heading { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' forgejo/CHANGELOG.md > notes.md
+          mise run -q release:notes "${VERSION}" > notes.md
           gh release create "${VERSION}" \
             --target "${GITHUB_SHA}" \
             --title "${VERSION}" \

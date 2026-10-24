@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#MISE description="Print the GitHub release notes for a published version: changelog, image digests, verification"
+#USAGE arg "[version]" help="Released app version (default: version in forgejo/config.yaml)" default=""
+set -euo pipefail
+
+# shellcheck source=mise-tasks/lib/version.sh
+source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
+cd "${MISE_PROJECT_ROOT}"
+
+version=${usage_version:-$(app_version)}
+image=$(yq '.image' "${CONFIG}")
+forgejo=$(forgejo_version)
+repository=$(yq '.url' repository.yaml)
+identity="${repository}/.github/workflows/ci.yaml@refs/heads/main"
+
+notes=$(changelog_section "${version}")
+if [[ -z "${notes}" ]]; then
+  echo "No changelog notes for ${version}" >&2
+  exit 1
+fi
+
+# The published multi-arch index, and the image per platform in it
+manifest=$(docker buildx imagetools inspect "${image}:${version}" --format '{{json .Manifest}}')
+index_digest=$(jq -r '.digest' <<< "${manifest}")
+
+cat << EOF
+${notes}
+
+## Container images
+
+Home Assistant pulls \`${image}:${version}\`. Its digests identify exactly
+what was released and can be used to pin or verify it:
+
+| Platform | Image |
+| --- | --- |
+| multi-arch | \`${image}:${version}@${index_digest}\` |
+EOF
+
+jq -r --arg image "${image}" --arg version "${version}" '
+  .manifests[]
+  | select(.platform.os == "linux")
+  | "| \(.platform.os)/\(.platform.architecture) | `\($image):\($version)@\(.digest)` |"
+' <<< "${manifest}"
+
+cat << EOF
+
+The images are signed with [cosign](https://docs.sigstore.dev/) by this
+repository's CI workflow and carry build provenance. To verify:
+
+\`\`\`sh
+cosign verify ${image}:${version} \\
+  --certificate-identity ${identity} \\
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+\`\`\`
+
+## Forgejo
+
+Forgejo [${forgejo}](https://codeberg.org/forgejo/forgejo/releases/tag/v${forgejo}),
+using the upstream binaries verified against these SHA-256 checksums:
+
+| Binary | SHA-256 |
+| --- | --- |
+EOF
+
+sed -n 's/^ARG FORGEJO_SHA256_\([A-Z0-9_]*\)=\(.*\)/\1 \2/p' "${DOCKERFILE}" \
+  | while read -r arch sha256; do
+    upstream=$(tr '[:upper:]_' '[:lower:]-' <<< "${arch}")
+    echo "| \`forgejo-${forgejo}-linux-${upstream}\` | \`${sha256}\` |"
+  done
