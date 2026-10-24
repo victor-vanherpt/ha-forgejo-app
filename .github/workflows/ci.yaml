@@ -2,7 +2,7 @@ name: CI
 
 # pull_request_target runs this workflow as it is on main, never a PR's copy, so
 # workflow changes only run once reviewed and merged. The PR's code is checked
-# out explicitly; PRs that change CI tooling wait for approval (see Gate).
+# out explicitly.
 on:
   pull_request_target:
     branches:
@@ -23,59 +23,20 @@ env:
   REF: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  gate:
-    name: Gate
-    # Only PRs opened from branches in this repository are built; forks are not
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      pull-requests: read
-    outputs:
-      approval: ${{ steps.files.outputs.approval }}
-    steps:
-      # Changes to code CI runs outside the app (workflows, mise config and
-      # tasks) need approval through the protected ci-approval environment.
-      - name: Check for CI tooling changes
-        id: files
-        if: github.event_name == 'pull_request_target'
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          changed=$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
-            | { grep -E '^(\.github/|\.?mise|\.config/mise|\.tool-versions$)' || true; })
-          if [[ -z "${changed}" ]]; then
-            echo "approval=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::notice::This PR changes CI tooling, so it needs approval: $(echo "${changed}" | paste -sd ' ' -)"
-          # Fail closed: an unprotected environment would let the run through
-          reviewers=$(gh api "repos/${GH_REPO}/environments/ci-approval" \
-            --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2> /dev/null || echo 0)
-          if [[ "${reviewers}" == "0" ]]; then
-            echo "::error::Environment ci-approval is missing or has no required reviewers (see README)"
-            exit 1
-          fi
-          echo "approval=true" >> "$GITHUB_OUTPUT"
-
-  approval:
-    name: Approval
-    needs: gate
-    if: needs.gate.outputs.approval == 'true'
-    runs-on: ubuntu-latest
-    environment: ci-approval
-    steps:
-      - name: Approved
-        run: echo "CI tooling changes approved"
-
   lint:
     name: Lint
-    needs: [gate, approval]
+    # PRs only run when opened from a branch in this repository (not a fork), by
+    # an allowed author, and triggered (pushed, re-run) by an allowed user. The
+    # allowlist is the CI_AUTHORS repository variable, a JSON list of logins,
+    # defaulting to the repository owner.
     if: >-
-      ${{ !cancelled() && needs.gate.result == 'success'
-      && contains(fromJSON('["success", "skipped"]'), needs.approval.result) }}
+      github.event_name == 'push' || (
+        github.event.pull_request.head.repo.full_name == github.repository
+        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
+          github.event.pull_request.user.login)
+        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
+          github.triggering_actor)
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
@@ -97,10 +58,18 @@ jobs:
 
   version:
     name: Version
-    needs: [gate, approval]
+    # PRs only run when opened from a branch in this repository (not a fork), by
+    # an allowed author, and triggered (pushed, re-run) by an allowed user. The
+    # allowlist is the CI_AUTHORS repository variable, a JSON list of logins,
+    # defaulting to the repository owner.
     if: >-
-      ${{ !cancelled() && needs.gate.result == 'success'
-      && contains(fromJSON('["success", "skipped"]'), needs.approval.result) }}
+      github.event_name == 'push' || (
+        github.event.pull_request.head.repo.full_name == github.repository
+        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
+          github.event.pull_request.user.login)
+        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
+          github.triggering_actor)
+      )
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.release.outputs.release }}
@@ -140,7 +109,6 @@ jobs:
   prepare:
     name: Prepare
     needs: version
-    if: ${{ !cancelled() && needs.version.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
@@ -204,7 +172,6 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}
     needs: prepare
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -265,9 +232,7 @@ jobs:
   publish:
     name: Publish
     needs: [lint, prepare, build]
-    if: >-
-      ${{ !cancelled() && needs.lint.result == 'success' && needs.build.result == 'success'
-      && needs.prepare.outputs.publish == 'true' }}
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -285,7 +250,7 @@ jobs:
   release:
     name: Release
     needs: [prepare, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event_name == 'push' }}
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -315,7 +280,7 @@ jobs:
   prerelease:
     name: Prerelease
     needs: [prepare, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event_name == 'pull_request_target' }}
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       contents: write
