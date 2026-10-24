@@ -1,0 +1,92 @@
+name: Forgejo update
+
+# Nightly: pin the latest stable Forgejo release on top of main and open a PR,
+# or refresh the open one (e.g. when main moved and the version needs a bump).
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forgejo-update
+
+jobs:
+  update:
+    name: Check for a new Forgejo release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: forgejo-update
+      # PRs created with GITHUB_TOKEN don't start workflows, so CI only runs on
+      # the PR when FORGEJO_UPDATE_TOKEN (a fine-grained token) is set.
+      GH_TOKEN: ${{ secrets.FORGEJO_UPDATE_TOKEN || github.token }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.FORGEJO_UPDATE_TOKEN || github.token }}
+
+      - name: Set up mise
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          install_args: jq yq
+
+      - name: Pin the latest Forgejo release
+        id: pin
+        run: |
+          current=$(sed -n 's/^ARG FORGEJO_VERSION=//p' forgejo/Dockerfile)
+          mise run forgejo:pin
+          latest=$(sed -n 's/^ARG FORGEJO_VERSION=//p' forgejo/Dockerfile)
+          if [[ "${latest}" == "${current}" ]]; then
+            echo "Forgejo ${current} is the latest stable release"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "changed=true"
+            echo "current=${current}"
+            echo "latest=${latest}"
+            echo "version=$(yq '.version' forgejo/config.yaml)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh the pull request
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.pin.outputs.current }}
+          LATEST: ${{ steps.pin.outputs.latest }}
+          VERSION: ${{ steps.pin.outputs.version }}
+        run: |
+          title="Update Forgejo to ${LATEST}"
+          git switch -c "${BRANCH}"
+          git add -A
+          git \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "${title}"
+
+          # Only push when this differs from what the open PR already proposes
+          if git fetch -q origin "${BRANCH}" 2> /dev/null && git diff --quiet FETCH_HEAD HEAD; then
+            echo "The ${BRANCH} branch is up to date"
+            exit 0
+          fi
+          git push -q -f origin "HEAD:refs/heads/${BRANCH}"
+
+          workflow="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/.github/workflows/forgejo-update.yaml"
+          body="Updates Forgejo from ${CURRENT} to ${LATEST} (app version ${VERSION}).
+
+          Check the [release notes](https://codeberg.org/forgejo/forgejo/releases/tag/v${LATEST}) before
+          merging: Forgejo sometimes advises against upgrading to a release.
+
+          Opened by the nightly [Forgejo update](${workflow}) workflow."
+          if [[ -n "$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[].number')" ]]; then
+            gh pr edit "${BRANCH}" --title "${title}" --body "${body}"
+          else
+            gh pr create --base main --head "${BRANCH}" --title "${title}" --body "${body}"
+          fi
