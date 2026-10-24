@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#MISE description="Smoke test an app image: boot, health check, git push over HTTP, SSH banner, restart"
+#USAGE arg "[image]" help="Image to test" default="local/forgejo:latest"
+#USAGE flag "--db <db>" help="Database to test against" default="sqlite3" {
+#USAGE   choices "sqlite3" "postgres" "mysql"
+#USAGE }
+set -euo pipefail
+
+image=${usage_image:-local/forgejo:latest}
+db=${usage_db:-sqlite3}
+name="forgejo-test-$$"
+work=$(mktemp -d)
+user=tester
+password='Smoke-test-pass-1'
+
+cleanup() {
+  local status=$?
+  if ((status != 0)); then
+    echo "::group::Container logs"
+    docker logs "${name}" 2>&1 || true
+    echo "::endgroup::"
+  fi
+  docker rm -f "${name}" "${name}-db" "${name}-supervisor" > /dev/null 2>&1 || true
+  docker network rm "${name}" > /dev/null 2>&1 || true
+  rm -rf "${work}"
+  exit "${status}"
+}
+trap cleanup EXIT
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+wait_healthy() {
+  local i
+  for ((i = 0; i < 90; i++)); do
+    if [[ "$(docker inspect -f '{{.State.Running}}' "${name}")" != "true" ]]; then
+      fail "container stopped"
+    fi
+    if curl -fsS "http://${http}/api/healthz" > /dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  fail "/api/healthz did not become healthy"
+}
+
+# Published ports are random and change on restart
+read_ports() {
+  http=$(docker port "${name}" 3000/tcp | head -n 1)
+  ssh_port=$(docker port "${name}" 2222/tcp | head -n 1)
+  ssh_port=${ssh_port##*:}
+}
+
+docker network create "${name}" > /dev/null
+
+# Mock Supervisor API: bashio reads options, host info and service discovery
+# from it. Each file is a resource path answered with {"result": "ok", "data": ...}
+api() {
+  mkdir -p "$(dirname "${work}/api/${1}")"
+  jq -n --argjson data "${2}" '{result: "ok", data: $data}' > "${work}/api/${1}"
+}
+
+database='{"db_type": "sqlite3"}'
+case "${db}" in
+  postgres)
+    docker run -d --name "${name}-db" --network "${name}" \
+      -e POSTGRES_USER=forgejo -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=forgejo \
+      postgres:17-alpine > /dev/null
+    database='{"db_type": "postgres", "host": "'"${name}"'-db:5432", "name": "forgejo", "user": "forgejo", "passwd": "secret", "ssl_mode": "disable"}'
+    ;;
+  mysql)
+    # No host set: credentials come from the (mocked) MariaDB app service
+    docker run -d --name "${name}-db" --network "${name}" \
+      -e MARIADB_ROOT_PASSWORD=root -e MARIADB_USER=service -e MARIADB_PASSWORD=secret -e MARIADB_DATABASE=forgejo \
+      mariadb:11 > /dev/null
+    database='{"db_type": "mysql"}'
+    api services/mysql '{"host": "'"${name}"'-db", "port": 3306, "username": "service", "password": "secret"}'
+    ;;
+esac
+
+api info '{"hostname": "homeassistant"}'
+api addons/self/info '{"network": {"3000/tcp": 3000, "2222/tcp": 2222}}'
+api addons/self/options/config "$(jq -n --argjson database "${database}" '{
+  server: {},
+  service: {disable_registration: false},
+  database: $database,
+  log: {level: "info"},
+  env_vars: [{name: "FORGEJO__DEFAULT__APP_NAME", value: "Smoke test"}]
+}')"
+
+docker create --name "${name}-supervisor" --network "${name}" --network-alias supervisor \
+  busybox:1.37 httpd -f -p 80 -h /www > /dev/null
+docker cp "${work}/api" "${name}-supervisor:/www"
+docker start "${name}-supervisor" > /dev/null
+
+echo "Testing ${image} with ${db}"
+docker run -d --name "${name}" --network "${name}" -e SUPERVISOR_TOKEN=test \
+  -p 127.0.0.1::3000 -p 127.0.0.1::2222 "${image}" > /dev/null
+
+read_ports
+wait_healthy
+echo "ok - healthy"
+
+docker exec "${name}" grep -q '^APP_NAME = Smoke test$' /config/app.ini || fail "env_vars not applied to app.ini"
+docker exec "${name}" grep -q "^DB_TYPE = ${db}$" /config/app.ini || fail "DB_TYPE not set to ${db}"
+docker exec "${name}" grep -q "^ROOT_URL = http://homeassistant.local:3000/$" /config/app.ini || fail "ROOT_URL default not derived from Supervisor"
+echo "ok - app.ini generated"
+
+docker exec -u git "${name}" forgejo admin user create \
+  --config /config/app.ini --work-path /data/forgejo \
+  --username "${user}" --password "${password}" --email tester@example.com \
+  --admin --must-change-password=false > /dev/null
+echo "ok - admin user created"
+
+curl -fsS -u "${user}:${password}" -H 'Content-Type: application/json' \
+  -d '{"name": "smoke"}' "http://${http}/api/v1/user/repos" > /dev/null
+git -C "${work}" init -q -b main repo
+git -C "${work}/repo" -c user.name=Tester -c user.email=tester@example.com \
+  commit -q --allow-empty -m "Smoke test"
+git -C "${work}/repo" push -q "http://${user}:${password}@${http}/${user}/smoke.git" main
+git -C "${work}" clone -q "http://${user}:${password}@${http}/${user}/smoke.git" clone
+[[ "$(git -C "${work}/clone" log --format=%s)" == "Smoke test" ]] || fail "pushed commit not found in clone"
+echo "ok - git push over HTTP"
+
+exec 3<> "/dev/tcp/127.0.0.1/${ssh_port}"
+read -r -t 10 banner <&3 || true
+exec 3>&-
+[[ "${banner}" == SSH-2.0-* ]] || fail "no SSH banner on port 2222 (got '${banner}')"
+echo "ok - SSH server answering"
+
+docker restart "${name}" > /dev/null
+read_ports
+wait_healthy
+curl -fsS -u "${user}:${password}" "http://${http}/api/v1/repos/${user}/smoke" > /dev/null || fail "repository lost after restart"
+echo "ok - restart keeps data"
+
+echo "All smoke tests passed (${db})"

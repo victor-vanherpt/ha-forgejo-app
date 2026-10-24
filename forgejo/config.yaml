@@ -1,0 +1,52 @@
+# https://contributors.home-assistant.io/apps/reference/configuration/
+name: Forgejo
+version: "17.0.0-2"
+slug: forgejo
+description: A self-hosted lightweight software forge
+url: "https://github.com/victor-vanherpt/ha-forgejo-app/tree/main/forgejo"
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: services
+boot: auto
+backup: cold
+image: "ghcr.io/victor-vanherpt/ha-forgejo-app"
+webui: "http://[HOST]:[PORT:3000]"
+watchdog: "http://[HOST]:[PORT:3000]/api/healthz"
+ports:
+  3000/tcp: 3000
+  2222/tcp: 2222
+map:
+  - app_config:rw
+services:
+  - mysql:want
+options:
+  server: {}
+  service:
+    disable_registration: false
+  database:
+    db_type: sqlite3
+  log:
+    level: info
+  env_vars: []
+schema:
+  server:
+    root_url: url?
+    ssh_domain: str?
+    ssh_port: port?
+  service:
+    disable_registration: bool
+  database:
+    db_type: list(sqlite3|postgres|mysql)
+    host: str?
+    name: str?
+    user: str?
+    passwd: password?
+    ssl_mode: list(disable|require|verify-ca|verify-full)?
+    schema: str?
+  log:
+    level: list(trace|debug|info|warn|error|fatal)
+  env_vars:
+    - name: match(^FORGEJO__[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+$)
+      value: str

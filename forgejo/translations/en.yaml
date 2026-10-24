@@ -1,0 +1,74 @@
+configuration:
+  server:
+    name: Server
+    description: Settings from the [server] section of app.ini.
+    fields:
+      root_url:
+        name: Root URL (ROOT_URL)
+        description: >-
+          Public URL users reach Forgejo on, e.g. https://git.example.com/.
+          When unset, the value already in app.ini is kept.
+      ssh_domain:
+        name: SSH domain (SSH_DOMAIN)
+        description: >-
+          Domain shown in SSH clone URLs. When unset, the value already in
+          app.ini is kept.
+      ssh_port:
+        name: SSH port (SSH_PORT)
+        description: >-
+          Port shown in SSH clone URLs. Set it when SSH is reachable on a
+          different port than the one mapped on the host.
+  service:
+    name: Service
+    description: Settings from the [service] section of app.ini.
+    fields:
+      disable_registration:
+        name: Disable registration (DISABLE_REGISTRATION)
+        description: >-
+          Prevent new users from signing up. Enable it after creating the
+          first (administrator) account.
+  database:
+    name: Database
+    description: Settings from the [database] section of app.ini.
+    fields:
+      db_type:
+        name: Database type (DB_TYPE)
+        description: >-
+          sqlite3 stores the database inside the app. postgres or mysql use
+          an external server. Changing it does not migrate existing data.
+      host:
+        name: Host (HOST)
+        description: >-
+          Database server as host:port. For mysql, leave empty to use the
+          MariaDB app.
+      name:
+        name: Database name (NAME)
+        description: Name of the database. Defaults to forgejo.
+      user:
+        name: User (USER)
+        description: Database user.
+      passwd:
+        name: Password (PASSWD)
+        description: Database password.
+      ssl_mode:
+        name: SSL mode (SSL_MODE)
+        description: PostgreSQL only. TLS mode for the connection.
+      schema:
+        name: Schema (SCHEMA)
+        description: PostgreSQL only. Schema to use instead of the default.
+  log:
+    name: Log
+    description: Settings from the [log] section of app.ini.
+    fields:
+      level:
+        name: Log level (LEVEL)
+        description: How much Forgejo and the app write to the log.
+  env_vars:
+    name: Extra settings
+    description: >-
+      Any other app.ini setting, named like Forgejo's environment overrides:
+      FORGEJO__section__KEY (e.g. FORGEJO__mailer__ENABLED). Applied on every
+      start.
+network:
+  3000/tcp: Web interface (HTTP)
+  2222/tcp: Git over SSH

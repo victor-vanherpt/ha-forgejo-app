@@ -1,0 +1,13 @@
+# Tasks live in mise-tasks/ (run `mise tasks` to list them)
+
+[tools]
+actionlint = "1.7.12"
+hadolint = "2.15.1"
+jq = "1.8.2"
+"pipx:yamllint" = "1.38.0"
+shellcheck = "0.11.0"
+uv = "0.13.5"
+yq = "4.54.1"
+
+[settings]
+pipx.uvx = true

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#MISE description="Set the app version to <forgejo>-<commit count main will have after this change>"
+set -euo pipefail
+
+# shellcheck source=mise-tasks/lib/version.sh
+source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
+cd "${MISE_PROJECT_ROOT}"
+
+forgejo=$(forgejo_version)
+
+# On main the next commit is the release commit; on a branch it is the squash
+# merge into origin/main.
+if [[ "$(git branch --show-current)" == "main" ]]; then
+  base=HEAD
+else
+  git fetch --quiet origin main
+  base=origin/main
+fi
+version="${forgejo}-$(($(commit_count "${base}") + 1))"
+
+current=$(app_version)
+yq -i ".version = \"${version}\"" "${CONFIG}"
+
+# Changelog: rename the unreleased top entry, or add a new one. An entry is
+# released once it exists on the base ref.
+top=$(sed -n 's/^## //p' "${CHANGELOG}" | head -n 1)
+if [[ -n "${top}" ]] && ! git show "${base}:${CHANGELOG}" 2>/dev/null | grep -qxF "## ${top}"; then
+  if [[ "${top}" != "${version}" ]]; then
+    sed -i.bak "s/^## ${top}\$/## ${version}/" "${CHANGELOG}"
+    rm -f "${CHANGELOG}.bak"
+  fi
+else
+  notes=""
+  if [[ "${current%-*}" != "${forgejo}" ]]; then
+    notes="- Update Forgejo to [${forgejo}](https://codeberg.org/forgejo/forgejo/releases/tag/v${forgejo})"
+  fi
+  awk -v entry="## ${version}" -v notes="${notes}" '
+    !done && /^## / { print entry "\n"; if (notes != "") print notes "\n"; done = 1 }
+    { print }
+    END { if (!done) { print "\n" entry; if (notes != "") print "\n" notes } }
+  ' "${CHANGELOG}" > "${CHANGELOG}.tmp"
+  mv "${CHANGELOG}.tmp" "${CHANGELOG}"
+fi
+
+echo "Version: ${current} -> ${version}"
+if [[ -z "$(changelog_section "${version}")" ]]; then
+  echo "Describe your change under '## ${version}' in ${CHANGELOG}"
+fi

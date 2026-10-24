@@ -1,0 +1,4 @@
+# https://contributors.home-assistant.io/apps/guides/repository/#create-the-repository
+name: Forgejo app repository
+url: "https://github.com/victor-vanherpt/ha-forgejo-app"
+maintainer: Victor van Herpt <victor@vanherpt.net>

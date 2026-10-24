@@ -1,0 +1,174 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Prepare Forgejo: directories, app.ini and database settings
+# ==============================================================================
+# shellcheck source=forgejo/rootfs/usr/lib/forgejo/ini.sh
+source /usr/lib/forgejo/ini.sh
+
+readonly CONFIG=/config/app.ini
+readonly CUSTOM=/config/custom
+readonly WORK=/data/forgejo
+
+declare db_type db_host db_name db_user db_passwd
+declare host http_port ssh_port level name value count i options
+
+# Option value, or $2 (default empty) when unset. bashio::config turns an
+# empty default into "null", so it can't be used for that.
+option() {
+    if bashio::config.has_value "${1}"; then
+        bashio::config "${1}"
+    else
+        echo "${2:-}"
+    fi
+}
+
+bashio::log.level "$(bashio::config 'log.level' | sed 's/^warn$/warning/')"
+
+mkdir -p "${WORK}" "${CUSTOM}"
+
+# ------------------------------------------------------------------------------
+# First start: generate app.ini with paths and secrets
+# ------------------------------------------------------------------------------
+if ! bashio::fs.file_exists "${CONFIG}"; then
+    bashio::log.info "Generating ${CONFIG}..."
+
+    host=localhost
+    http_port=3000
+    ssh_port=2222
+    if [[ -n "${SUPERVISOR_TOKEN:-}" ]]; then
+        host="$(bashio::info.hostname).local"
+        http_port=$(bashio::app.port 3000 || true)
+        ssh_port=$(bashio::app.port 2222 || true)
+        [[ "${http_port}" =~ ^[0-9]+$ ]] || http_port=3000
+        [[ "${ssh_port}" =~ ^[0-9]+$ ]] || ssh_port=2222
+    fi
+
+    cat > "${CONFIG}" <<EOF
+APP_NAME = Forgejo
+RUN_USER = git
+RUN_MODE = prod
+WORK_PATH = ${WORK}
+
+[server]
+PROTOCOL = http
+HTTP_ADDR = 0.0.0.0
+HTTP_PORT = 3000
+DOMAIN = ${host}
+ROOT_URL = http://${host}:${http_port}/
+APP_DATA_PATH = ${WORK}/data
+LFS_START_SERVER = true
+START_SSH_SERVER = true
+SSH_DOMAIN = ${host}
+SSH_PORT = ${ssh_port}
+SSH_LISTEN_PORT = 2222
+LFS_JWT_SECRET = $(forgejo generate secret LFS_JWT_SECRET)
+
+[database]
+DB_TYPE = sqlite3
+PATH = ${WORK}/data/forgejo.db
+
+[repository]
+ROOT = ${WORK}/git/repositories
+
+[log]
+MODE = console
+LEVEL = info
+ROOT_PATH = ${WORK}/log
+
+[security]
+INSTALL_LOCK = true
+SECRET_KEY = $(forgejo generate secret SECRET_KEY)
+INTERNAL_TOKEN = $(forgejo generate secret INTERNAL_TOKEN)
+
+[oauth2]
+JWT_SECRET = $(forgejo generate secret JWT_SECRET)
+
+[service]
+DISABLE_REGISTRATION = false
+EOF
+fi
+
+# ------------------------------------------------------------------------------
+# Every start: apply app options (set options win over app.ini)
+# ------------------------------------------------------------------------------
+if bashio::config.has_value 'server.root_url'; then
+    forgejo::ini.set "${CONFIG}" server ROOT_URL "$(bashio::config 'server.root_url')"
+fi
+if bashio::config.has_value 'server.ssh_domain'; then
+    forgejo::ini.set "${CONFIG}" server SSH_DOMAIN "$(bashio::config 'server.ssh_domain')"
+fi
+if bashio::config.has_value 'server.ssh_port'; then
+    forgejo::ini.set "${CONFIG}" server SSH_PORT "$(bashio::config 'server.ssh_port')"
+fi
+
+forgejo::ini.set "${CONFIG}" service DISABLE_REGISTRATION \
+    "$(bashio::config 'service.disable_registration')"
+
+level=$(bashio::config 'log.level')
+forgejo::ini.set "${CONFIG}" log LEVEL "${level^}"
+
+# Database
+db_type=$(bashio::config 'database.db_type')
+db_host=$(option 'database.host')
+db_name=$(option 'database.name' 'forgejo')
+db_user=$(option 'database.user')
+db_passwd=$(option 'database.passwd')
+
+forgejo::ini.set "${CONFIG}" database DB_TYPE "${db_type}"
+
+if [[ "${db_type}" != "sqlite3" ]]; then
+    if [[ "${db_type}" == "mysql" ]] && ! bashio::var.has_value "${db_host}"; then
+        if [[ -z "${SUPERVISOR_TOKEN:-}" ]] || ! bashio::services.available "mysql"; then
+            bashio::exit.nok "database.host is empty and no MariaDB app is available"
+        fi
+        bashio::log.info "Using the MariaDB app for the database"
+        db_host="$(bashio::services 'mysql' 'host'):$(bashio::services 'mysql' 'port')"
+        bashio::var.has_value "${db_user}" || db_user=$(bashio::services 'mysql' 'username')
+        bashio::var.has_value "${db_passwd}" || db_passwd=$(bashio::services 'mysql' 'password')
+    fi
+
+    bashio::var.has_value "${db_host}" || bashio::exit.nok "database.host is required for ${db_type}"
+    bashio::var.has_value "${db_user}" || bashio::exit.nok "database.user is required for ${db_type}"
+
+    forgejo::ini.set "${CONFIG}" database HOST "${db_host}"
+    forgejo::ini.set "${CONFIG}" database NAME "${db_name}"
+    forgejo::ini.set "${CONFIG}" database USER "${db_user}"
+    forgejo::ini.set "${CONFIG}" database PASSWD "\`${db_passwd}\`"
+    if bashio::config.has_value 'database.ssl_mode'; then
+        forgejo::ini.set "${CONFIG}" database SSL_MODE "$(bashio::config 'database.ssl_mode')"
+    fi
+    if bashio::config.has_value 'database.schema'; then
+        forgejo::ini.set "${CONFIG}" database SCHEMA "$(bashio::config 'database.schema')"
+    fi
+fi
+
+# Extra settings, applied last so they can override anything above
+options=$(bashio::app.config)
+count=$(bashio::jq "${options}" '.env_vars | length')
+for (( i = 0; i < count; i++ )); do
+    name=$(bashio::jq "${options}" ".env_vars[${i}].name")
+    value=$(bashio::jq "${options}" ".env_vars[${i}].value")
+    bashio::log.debug "Applying ${name}"
+    forgejo::ini.apply_env "${CONFIG}" "${name}" "${value}"
+done
+
+# ------------------------------------------------------------------------------
+# Wait for an external database, so a slow DB app does not cause a crash loop
+# ------------------------------------------------------------------------------
+if [[ "${db_type}" != "sqlite3" ]]; then
+    db_host=$(forgejo::ini.get "${CONFIG}" database HOST)
+    bashio::log.info "Waiting for database at ${db_host}..."
+    if [[ "${db_host}" == /* ]]; then
+        bashio::log.info "Unix socket configured, not waiting"
+    else
+        for (( i = 0; i < 60; i++ )); do
+            (echo > "/dev/tcp/${db_host%:*}/${db_host##*:}") 2> /dev/null && break
+            sleep 1
+        done
+        (( i < 60 )) || bashio::exit.nok "Database at ${db_host} is not reachable"
+    fi
+fi
+
+find "${WORK}" "${CUSTOM}" "${CONFIG}" ! -user git -exec chown git:git {} +
+chmod 0640 "${CONFIG}"

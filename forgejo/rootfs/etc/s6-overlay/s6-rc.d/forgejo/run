@@ -1,0 +1,14 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Start Forgejo
+# ==============================================================================
+bashio::log.info "Starting Forgejo..."
+
+cd /data/forgejo || bashio::exit.nok "Could not change to /data/forgejo"
+export HOME=/data/forgejo USER=git
+
+exec s6-setuidgid git /usr/local/bin/forgejo web \
+    --config /config/app.ini \
+    --custom-path /config/custom \
+    --work-path /data/forgejo
