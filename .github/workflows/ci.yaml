@@ -97,19 +97,20 @@ jobs:
           install_args: jq yq
 
       # Releases from main publish <version> and latest. Pull requests from this
-      # repository publish a <version>-pr-<number>-<short sha> prerelease; forks
+      # repository publish a <version>-pr-<number>-<commits>-<short sha> prerelease; forks
       # can't push.
       - name: Get app information
         id: info
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE: ${{ needs.version.outputs.release }}
           SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}")
+            version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}" --commits "${PR_COMMITS}")
             tags=${version}
             publish=${SAME_REPO}
           else
@@ -287,9 +288,9 @@ jobs:
         env:
           BRANCH: ${{ steps.branch.outputs.branch }}
         run: |
-          # One prerelease per PR: drop earlier ones (<version>-pr-<number>-<sha>)
+          # One prerelease per PR: drop earlier ones (<version>-pr-<number>-<commits>-<sha>)
           gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | { grep -E -- "-pr-${PR_NUMBER}-[0-9a-f]{7}$" || true; } \
+            | { grep -E -- "-pr-${PR_NUMBER}-[0-9]+-[0-9a-f]{7}$" || true; } \
             | xargs -r -n 1 gh release delete --cleanup-tag --yes
           gh release create "${VERSION}" \
             --prerelease \

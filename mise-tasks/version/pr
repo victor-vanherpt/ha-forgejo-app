@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Print the prerelease version for a PR: <version>-pr-<number>-<short sha>"
+#MISE description="Print the prerelease version for a PR: <version>-pr-<number>-<commits>-<short sha>"
 #USAGE arg "<number>" help="Pull request number"
 #USAGE flag "--sha <sha>" help="PR head commit (default: HEAD)"
+#USAGE flag "--commits <n>" help="Commits in the PR (default: counted from --base to --sha)"
+#USAGE flag "--base <ref>" help="Branch the PR merges into" default="origin/main"
 set -euo pipefail
 
 # shellcheck source=mise-tasks/lib/version.sh
@@ -20,4 +22,14 @@ if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
   sha=$(git rev-parse "${sha}")
 fi
 
-echo "$(app_version)-pr-${number}-${sha:0:7}"
+# Commits in the PR, so prereleases of one PR sort in push order
+commits=${usage_commits:-}
+if [[ -z "${commits}" ]]; then
+  commits=$(git rev-list --count "${usage_base:-origin/main}..${sha}")
+fi
+if [[ ! "${commits}" =~ ^[0-9]+$ ]]; then
+  echo "Not a commit count: ${commits}" >&2
+  exit 1
+fi
+
+echo "$(app_version)-pr-${number}-${commits}-${sha:0:7}"

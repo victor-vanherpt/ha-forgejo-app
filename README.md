@@ -16,7 +16,7 @@ then `mise tasks` to see what's available:
 | `mise run forgejo:pin [version]` | Pin Forgejo to the latest stable release (or `version`), update checksums and architectures, then bump |
 | `mise run bump` | Set the app version for the next commit on `main` |
 | `mise run version:check [--base ref]` | Check the version and changelog (CI runs this) |
-| `mise run version:pr <number> [--sha sha]` | Print the PR prerelease version, `<version>-pr-<number>-<short sha>` |
+| `mise run version:pr <number>` | Print the PR prerelease version, `<version>-pr-<number>-<commits>-<short sha>` |
 | `mise run lint` | hadolint, shellcheck, yamllint, actionlint, translation keys |
 | `mise run build [arch]` | Build `local/forgejo:latest` for `aarch64` or `amd64` |
 | `mise run test [image] [--db sqlite3\|postgres\|mysql]` | Smoke test an image against a mocked Supervisor |
@@ -59,9 +59,10 @@ Assistant supports (`aarch64`, `amd64`).
 ### PR prereleases
 
 Every push to a PR from this repository publishes a prerelease
-`<version>-pr-<number>-<short sha>`, e.g. `17.0.0-3-pr-12-a8aa8e0` (see
-`mise run version:pr`). Each push gives a new version, so Home Assistant
-offers it as an update.
+`<version>-pr-<number>-<commits>-<short sha>`, e.g. `17.0.0-3-pr-12-4-a8aa8e0`
+for the 4th commit of PR #12 (see `mise run version:pr`). The commit count
+makes a PR's prereleases sort in order; each push is a new version, so Home
+Assistant offers it as an update.
 
 - images tagged with that version,
 - a `pr/<number>` branch holding just the Home Assistant repository with that
