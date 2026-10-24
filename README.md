@@ -79,8 +79,7 @@ To test a PR in Home Assistant, add
 and install **Forgejo (PR #n)** from it. Uninstall it and remove the repository
 when done. When the PR is merged or closed,
 [`pr-cleanup.yaml`](.github/workflows/pr-cleanup.yaml) deletes the prerelease,
-the branch and the images. PRs from forks are built and tested but not
-published.
+the branch and the images. PRs from forks are not built at all.
 
 ### Repository settings
 

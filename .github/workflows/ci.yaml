@@ -18,6 +18,8 @@ permissions:
 jobs:
   lint:
     name: Lint
+    # Only PRs opened from branches in this repository are built; forks are not
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
@@ -38,6 +40,8 @@ jobs:
 
   version:
     name: Version
+    # Only PRs opened from branches in this repository are built; forks are not
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.release.outputs.release }}
@@ -96,9 +100,8 @@ jobs:
         with:
           install_args: jq yq
 
-      # Releases from main publish <version> and latest. Pull requests from this
-      # repository publish a <version>-pr-<number>-<commits>-<short sha> prerelease; forks
-      # can't push.
+      # Releases from main publish <version> and latest. Pull requests publish a
+      # <version>-pr-<number>-<commits>-<short sha> prerelease.
       - name: Get app information
         id: info
         env:
@@ -106,13 +109,12 @@ jobs:
           PR_COMMITS: ${{ github.event.pull_request.commits }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE: ${{ needs.version.outputs.release }}
-          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}" --commits "${PR_COMMITS}")
             tags=${version}
-            publish=${SAME_REPO}
+            publish=true
           else
             version=$(yq '.version' forgejo/config.yaml)
             tags="${version}"$'\n'"latest"
