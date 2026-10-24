@@ -108,6 +108,14 @@ the branch and the images.
   approval fail at **Authorize**. (The `ci` environment is created
   automatically and needs no protection.)
 - General → Pull requests: allow **squash merging** only.
+- Actions → General → Approval for running fork pull request workflows from
+  contributors: **Require approval for all external contributors**. A PR can
+  switch its own copy of the workflow back to `pull_request`, which runs the
+  PR's version; this keeps such runs from starting (or reporting a fake
+  **CI result**) until you have reviewed the change.
+- Actions → General → Workflow permissions: **Read repository contents and
+  packages permissions**, so tokens are read-only unless a job asks for more
+  (the jobs here request exactly what they need).
 - Rulesets for `main`: require a pull request, require the status check
   **CI result**, and require branches to be up to date before merging.
 
