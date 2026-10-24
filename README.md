@@ -50,14 +50,17 @@ Assistant supports (`aarch64`, `amd64`).
 ### CI
 
 [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) runs on `main` and on
-PRs opened from a branch in this repository. PRs from forks fail.
+every PR, including PRs from forks.
 
-- **Authorize / Approval**: PRs whose author, and the user who pushed or
-  re-ran, are allowed run straight away. Allowed users are the repository
-  variable `CI_AUTHORS` (a JSON list of logins, e.g.
+- **Authorize / Approval**: PRs from this repository whose author, and the user
+  who pushed or re-ran, are allowed run straight away. Allowed users are the
+  repository variable `CI_AUTHORS` (a JSON list of logins, e.g.
   `["victor-vanherpt", "renovate[bot]"]`), or only the repository owner when it
-  isn't set. Other PRs wait until a reviewer approves the run in the
-  `ci-approval` environment.
+  isn't set. Every other PR, including all PRs from forks, waits until a
+  reviewer approves the run in the `ci-approval` environment. **Review the
+  diff before approving**: the run executes the PR's code (mise tasks,
+  Dockerfile, smoke test) with permission to publish images and prereleases.
+  Each new push to the PR needs a new approval.
 - **CI result**: fails unless every job that should have run succeeded. It is
   the only required status check, so a skipped, rejected or failed run never
   counts as passing. It is triggered by
@@ -76,7 +79,7 @@ changes in a PR don't run until the PR is reviewed and merged (check them with
 
 ### PR prereleases
 
-Every push to a PR from this repository publishes a prerelease
+Every push to a PR (once authorized or approved) publishes a prerelease
 `<version>-pr-<number>-<commits>-<short sha>`, e.g. `17.0.0-3-pr-12-004-a8aa8e0`
 for the 4th commit of PR #12 (see `mise run version:pr`). The zero-padded
 commit count makes a PR's prereleases sort in order; each push is a new version, so Home
@@ -92,7 +95,7 @@ To test a PR in Home Assistant, add
 and install **Forgejo (PR #n)** from it. Uninstall it and remove the repository
 when done. When the PR is merged or closed,
 [`pr-cleanup.yaml`](.github/workflows/pr-cleanup.yaml) deletes the prerelease,
-the branch and the images. PRs from forks are not built at all.
+the branch and the images.
 
 ### Repository settings
 

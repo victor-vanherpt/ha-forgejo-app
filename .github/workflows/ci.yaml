@@ -23,11 +23,12 @@ env:
   REF: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  # Pushes to main and PRs by allowed users run straight away. PRs by anyone
-  # else wait for a reviewer of the protected ci-approval environment. PRs from
-  # forks fail. Allowed users: the CI_AUTHORS repository variable (a JSON list
-  # of logins), or the repository owner when it isn't set. Both the PR author
-  # and the user who triggered the run (pushed, re-ran) must be allowed.
+  # Pushes to main and PRs from this repository by allowed users run straight
+  # away. Every other PR, including all PRs from forks, waits for a reviewer of
+  # the protected ci-approval environment, because the jobs run the PR's code.
+  # Allowed users: the CI_AUTHORS repository variable (a JSON list of logins),
+  # or the repository owner when it isn't set. Both the PR author and the user
+  # who triggered the run (pushed, re-ran) must be allowed.
   authorize:
     name: Authorize
     runs-on: ubuntu-latest
@@ -51,13 +52,10 @@ jobs:
           }
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             environment=ci
-          elif [[ "${SAME_REPO}" != "true" ]]; then
-            echo "::error::Pull requests from forks are not built"
-            exit 1
-          elif allowed "${AUTHOR}" && allowed "${ACTOR}"; then
+          elif [[ "${SAME_REPO}" == "true" ]] && allowed "${AUTHOR}" && allowed "${ACTOR}"; then
             environment=ci
           else
-            echo "::notice::${AUTHOR} (triggered by ${ACTOR}) is not in CI_AUTHORS: waiting for approval"
+            echo "::notice::PR by ${AUTHOR} (triggered by ${ACTOR}, same repository: ${SAME_REPO}) waits for approval"
             # Fail closed: an unprotected environment would let the run through
             reviewers=$(gh api "repos/${GH_REPO}/environments/ci-approval" \
               --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2> /dev/null || echo 0)
@@ -365,7 +363,7 @@ jobs:
           gh release create "${VERSION}" \
             --prerelease \
             --latest=false \
-            --target "${HEAD_SHA}" \
+            --target "${BRANCH}" \
             --title "${VERSION}" \
             --notes "Prerelease of #${PR_NUMBER} at ${HEAD_SHA}.
 
