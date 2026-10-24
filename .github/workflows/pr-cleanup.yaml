@@ -1,7 +1,8 @@
 name: PR cleanup
 
 # Remove a PR's prerelease (GitHub release, pr/<number> branch and images)
-# once it is merged or closed. pull_request_target: runs as defined on main.
+# once it is merged or closed. pull_request_target runs this as defined on main
+# with a write token for every PR, including forks; it checks out no PR code.
 on:
   pull_request_target:
     branches:
