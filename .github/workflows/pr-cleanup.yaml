@@ -1,0 +1,85 @@
+name: PR cleanup
+
+# Remove a PR's prerelease (GitHub release, pr/<branch> branch and images)
+# once it is merged or closed.
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Clean up prerelease
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@v5.2.2
+        with:
+          install_args: jq yq
+
+      - name: Find prerelease
+        id: pr
+        run: |
+          version=$(mise run -q version:pr "${GITHUB_HEAD_REF}")
+          echo "suffix=-pr-${version#*-pr-}" >> "$GITHUB_OUTPUT"
+
+      - name: Delete GitHub prereleases
+        env:
+          SUFFIX: ${{ steps.pr.outputs.suffix }}
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' \
+            | awk -v suffix="${SUFFIX}" 'substr($0, length($0) - length(suffix) + 1) == suffix' \
+            | xargs -r -n 1 gh release delete --cleanup-tag --yes
+
+      - name: Delete Home Assistant repository branch
+        env:
+          SUFFIX: ${{ steps.pr.outputs.suffix }}
+        run: |
+          branch="pr/${SUFFIX#-pr-}"
+          if gh api "repos/${GH_REPO}/git/refs/heads/${branch}" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/${GH_REPO}/git/refs/heads/${branch}"
+          fi
+
+      - name: Delete images
+        env:
+          SUFFIX: ${{ steps.pr.outputs.suffix }}
+        run: |
+          image=$(yq '.image' forgejo/config.yaml)
+          name=${image##*/}
+          owner=$(cut -d / -f 2 <<< "${image}")
+          if [[ "$(gh api "users/${owner}" --jq .type)" == "Organization" ]]; then
+            base="orgs/${owner}/packages/container"
+          else
+            base="users/${owner}/packages/container"
+          fi
+          for package in "${name}" $(yq '.arch[]' forgejo/config.yaml | sed "s/\$/-${name}/"); do
+            # Versions whose every tag is a prerelease tag of this PR
+            ids=$(gh api --paginate "${base}/${package}/versions" \
+              --jq ".[] | select(.metadata.container.tags | length > 0)
+                        | select(all(.metadata.container.tags[]; endswith(\"${SUFFIX}\"))) | .id") || {
+              echo "::warning::Could not list versions of ${package}"
+              continue
+            }
+            for id in ${ids}; do
+              gh api -X DELETE "${base}/${package}/versions/${id}" \
+                || echo "::warning::Could not delete ${package} version ${id}"
+            done
+          done

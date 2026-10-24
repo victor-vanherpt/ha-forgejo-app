@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Print the prerelease version for a PR branch: <version>-pr-<branch>"
+#USAGE arg "[branch]" help="PR branch name (default: current branch)" default=""
+set -euo pipefail
+
+# shellcheck source=mise-tasks/lib/version.sh
+source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
+cd "${MISE_PROJECT_ROOT}"
+
+branch=${usage_branch:-$(git branch --show-current)}
+slug=$(pr_slug "${branch}")
+if [[ -z "${slug}" ]]; then
+  echo "Branch name '${branch}' has no usable characters" >&2
+  exit 1
+fi
+echo "$(app_version)-pr-${slug}"

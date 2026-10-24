@@ -16,6 +16,7 @@ then `mise tasks` to see what's available:
 | `mise run forgejo:pin [version]` | Pin Forgejo to the latest stable release (or `version`), update checksums and architectures, then bump |
 | `mise run bump` | Set the app version for the next commit on `main` |
 | `mise run version:check [--base ref]` | Check the version and changelog (CI runs this) |
+| `mise run version:pr [branch]` | Print the PR prerelease version, `<version>-pr-<branch>` |
 | `mise run lint` | hadolint, shellcheck, yamllint, actionlint, translation keys |
 | `mise run build [arch]` | Build `local/forgejo:latest` for `aarch64` or `amd64` |
 | `mise run test [image] [--db sqlite3\|postgres\|mysql]` | Smoke test an image against a mocked Supervisor |
@@ -50,13 +51,36 @@ Assistant supports (`aarch64`, `amd64`).
 2. **Version**: `mise run version:check`
 3. **Build**: per architecture on native runners, then smoke tests (SQLite on
    both, PostgreSQL and MariaDB on amd64)
-4. **Release** (`main` only): push the images, publish the multi-arch manifest
-   to `ghcr.io/victor-vanherpt/ha-forgejo-app` and create the GitHub release
+4. **Publish**: push the images and the multi-arch manifest to
+   `ghcr.io/victor-vanherpt/ha-forgejo-app`
+5. **Release** (`main`): GitHub release `<version>` with the changelog notes;
+   **Prerelease** (PRs): see below
+
+### PR prereleases
+
+Every push to a PR from this repository publishes a prerelease
+`<version>-pr-<branch>` (e.g. `17.0.0-3-pr-my-change`, see
+`mise run version:pr`):
+
+- images tagged with that version,
+- a `pr/<branch>` branch holding just the Home Assistant repository with that
+  version, and
+- a GitHub prerelease explaining how to install it.
+
+To test a PR in Home Assistant, add
+`https://github.com/victor-vanherpt/ha-forgejo-app#pr/<branch>` as a repository
+and install **Forgejo (PR #n)** from it. Uninstall it and remove the repository
+when done. When the PR is merged or closed,
+[`pr-cleanup.yaml`](.github/workflows/pr-cleanup.yaml) deletes the prerelease,
+the branch and the images. PRs from forks are built and tested but not
+published.
 
 ### Repository settings
 
-- After the first release, make the `ha-forgejo-app` package public
-  (GitHub → Packages → Package settings), or Home Assistant can't pull it.
+- After the first publish (the first PR prerelease), make the
+  `ha-forgejo-app`, `aarch64-ha-forgejo-app` and `amd64-ha-forgejo-app`
+  packages public (GitHub → Packages → Package settings), or Home Assistant
+  can't pull them.
 - General → Pull requests: allow **squash merging** only.
 - Rulesets for `main`: require a pull request, require the status checks
   **Lint**, **Version**, **Build aarch64** and **Build amd64**, and require

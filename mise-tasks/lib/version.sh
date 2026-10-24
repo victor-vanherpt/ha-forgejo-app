@@ -30,3 +30,11 @@ changelog_section() {
     found { print }
   ' "${CHANGELOG}" | sed '/^[[:space:]]*$/d'
 }
+
+# Branch name made safe for image tags and refs: lowercase [a-z0-9.-], max 40
+pr_slug() {
+  tr '[:upper:]' '[:lower:]' <<< "${1}" \
+    | sed -E 's/[^a-z0-9.]+/-/g; s/^-+//' \
+    | cut -c 1-40 \
+    | sed -E 's/-+$//'
+}
