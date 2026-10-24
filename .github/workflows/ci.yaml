@@ -84,7 +84,6 @@ jobs:
       image_tags: ${{ steps.info.outputs.image_tags }}
       publish: ${{ steps.info.outputs.publish }}
       registry_prefix: ${{ steps.info.outputs.registry_prefix }}
-      slug: ${{ steps.info.outputs.slug }}
       version: ${{ steps.info.outputs.version }}
     steps:
       - name: Check out the repository
@@ -95,22 +94,22 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@v5.2.2
         with:
-          install_args: jq yq python
+          install_args: jq yq
 
       # Releases from main publish <version> and latest. Pull requests from this
-      # repository publish a <version>-pr-<branch>-<short sha> prerelease; forks
+      # repository publish a <version>-pr-<number>-<short sha> prerelease; forks
       # can't push.
       - name: Get app information
         id: info
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE: ${{ needs.version.outputs.release }}
           SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            version=$(mise run -q version:pr "${GITHUB_HEAD_REF}" --sha "${HEAD_SHA}")
-            slug=$(mise run -q version:pr "${GITHUB_HEAD_REF}" --slug)
+            version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}")
             tags=${version}
             publish=${SAME_REPO}
           else
@@ -124,7 +123,6 @@ jobs:
             echo "registry_prefix=${image%/*}"
             echo "version=${version}"
             echo "publish=${publish}"
-            echo "slug=${slug:-}"
             echo "image_tags<<EOF"
             echo "${tags}"
             echo "EOF"
@@ -257,7 +255,6 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       IMAGE: ${{ needs.prepare.outputs.registry_prefix }}/${{ needs.prepare.outputs.image_name }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      SLUG: ${{ needs.prepare.outputs.slug }}
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Check out the repository
@@ -271,7 +268,7 @@ jobs:
       - name: Publish Home Assistant repository branch
         id: branch
         run: |
-          branch="pr/${SLUG}"
+          branch="pr/${PR_NUMBER}"
           dir=$(mktemp -d)
           cp -R repository.yaml forgejo "${dir}/"
           yq -i ".version = \"${VERSION}\" | .name = \"Forgejo (PR #${PR_NUMBER})\"" "${dir}/forgejo/config.yaml"
@@ -290,13 +287,9 @@ jobs:
         env:
           BRANCH: ${{ steps.branch.outputs.branch }}
         run: |
-          # One prerelease per PR: drop earlier ones (<version>-pr-<slug>-<sha>)
+          # One prerelease per PR: drop earlier ones (<version>-pr-<number>-<sha>)
           gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | awk -v want="-pr-${SLUG}" '{
-                n = length($0); head = substr($0, 1, n - 8); tail = substr($0, n - 7)
-                if (n > 8 && tail ~ /^-[0-9a-f]+$/ && length(tail) == 8 &&
-                    substr(head, length(head) - length(want) + 1) == want) print
-              }' \
+            | { grep -E -- "-pr-${PR_NUMBER}-[0-9a-f]{7}$" || true; } \
             | xargs -r -n 1 gh release delete --cleanup-tag --yes
           gh release create "${VERSION}" \
             --prerelease \

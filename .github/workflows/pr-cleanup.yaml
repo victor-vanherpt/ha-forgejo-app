@@ -1,6 +1,6 @@
 name: PR cleanup
 
-# Remove a PR's prerelease (GitHub release, pr/<branch> branch and images)
+# Remove a PR's prerelease (GitHub release, pr/<number> branch and images)
 # once it is merged or closed.
 on:
   pull_request:
@@ -23,6 +23,7 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7.0.1
@@ -33,37 +34,23 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@v5.2.2
         with:
-          install_args: jq yq python
+          install_args: yq
 
-      - name: Find prerelease
-        id: pr
-        run: echo "slug=$(mise run -q version:pr "${GITHUB_HEAD_REF}" --slug)" >> "$GITHUB_OUTPUT"
-
-      # Prerelease versions are <version>-pr-<slug>-<short sha>
+      # Prerelease versions are <version>-pr-<number>-<short sha>
       - name: Delete GitHub prereleases
-        env:
-          SLUG: ${{ steps.pr.outputs.slug }}
         run: |
           gh release list --limit 200 --json tagName --jq '.[].tagName' \
-            | awk -v want="-pr-${SLUG}" '{
-                n = length($0); head = substr($0, 1, n - 8); tail = substr($0, n - 7)
-                if (n > 8 && tail ~ /^-[0-9a-f]+$/ && length(tail) == 8 &&
-                    substr(head, length(head) - length(want) + 1) == want) print
-              }' \
+            | { grep -E -- "-pr-${PR_NUMBER}-[0-9a-f]{7}$" || true; } \
             | xargs -r -n 1 gh release delete --cleanup-tag --yes
 
       - name: Delete Home Assistant repository branch
-        env:
-          SLUG: ${{ steps.pr.outputs.slug }}
         run: |
-          branch="pr/${SLUG}"
+          branch="pr/${PR_NUMBER}"
           if gh api "repos/${GH_REPO}/git/refs/heads/${branch}" > /dev/null 2>&1; then
             gh api -X DELETE "repos/${GH_REPO}/git/refs/heads/${branch}"
           fi
 
       - name: Delete images
-        env:
-          SLUG: ${{ steps.pr.outputs.slug }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
           name=${image##*/}
@@ -76,9 +63,8 @@ jobs:
           for package in "${name}" $(yq '.arch[]' forgejo/config.yaml | sed "s/\$/-${name}/"); do
             # Versions whose every tag is a prerelease tag of this PR
             ids=$(gh api --paginate "${base}/${package}/versions" --jq "
-              def pr_tag: (.[:-8] | endswith(\"-pr-${SLUG}\")) and (.[-8:] | test(\"^-[0-9a-f]{7}\$\"));
               .[] | select(.metadata.container.tags | length > 0)
-                  | select(all(.metadata.container.tags[]; pr_tag)) | .id") || {
+                  | select(all(.metadata.container.tags[]; test(\"-pr-${PR_NUMBER}-[0-9a-f]{7}\$\"))) | .id") || {
               echo "::warning::Could not list versions of ${package}"
               continue
             }

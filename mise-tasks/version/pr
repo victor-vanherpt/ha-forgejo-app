@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-#MISE description="Print the prerelease version for a PR: <version>-pr-<branch>-<short sha>"
-#USAGE arg "[branch]" help="PR branch name (default: current branch)" default=""
+#MISE description="Print the prerelease version for a PR: <version>-pr-<number>-<short sha>"
+#USAGE arg "<number>" help="Pull request number"
 #USAGE flag "--sha <sha>" help="PR head commit (default: HEAD)"
-#USAGE flag "--slug" help="Print only the cleaned-up branch name"
 set -euo pipefail
 
 # shellcheck source=mise-tasks/lib/version.sh
 source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
 cd "${MISE_PROJECT_ROOT}"
 
-branch=${usage_branch:-$(git branch --show-current)}
-slug=$(pr_slug "${branch}")
-if [[ "${usage_slug:-false}" == "true" ]]; then
-  echo "${slug}"
-  exit 0
+number=${usage_number:?}
+if [[ ! "${number}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Not a pull request number: ${number}" >&2
+  exit 1
 fi
 
 # A full SHA is used as given (CI's shallow checkout may not contain it)
@@ -21,4 +19,5 @@ sha=${usage_sha:-HEAD}
 if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
   sha=$(git rev-parse "${sha}")
 fi
-echo "$(app_version)-pr-${slug}-${sha:0:7}"
+
+echo "$(app_version)-pr-${number}-${sha:0:7}"
