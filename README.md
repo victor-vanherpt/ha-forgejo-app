@@ -10,8 +10,8 @@ A Home Assistant app repository with one app:
 
 - [Development](docs/development.md): tooling, mise tasks, versions and
   updating Forgejo
-- [CI](docs/ci.md): the pipeline, who can run it, and PR prereleases you can
-  install in Home Assistant
+- [CI](docs/ci.md): the pipeline, who can run it, PR prereleases you can
+  install in Home Assistant, and nightly Forgejo update PRs
 - [Repository settings](docs/repository-settings.md): one-time GitHub setup
 
 ## License
