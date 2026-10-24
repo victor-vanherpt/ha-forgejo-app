@@ -61,3 +61,11 @@ Assistant supports (`aarch64`, `amd64`).
 - Rulesets for `main`: require a pull request, require the status checks
   **Lint**, **Version**, **Build aarch64** and **Build amd64**, and require
   branches to be up to date before merging.
+
+## License
+
+[MIT](LICENSE), except for the Forgejo logo files (`forgejo/icon.png`,
+`forgejo/logo.png`): created by [Caesar Schinas](https://caesarschinas.com/),
+licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/),
+rendered to PNG from the
+[original SVG](https://codeberg.org/forgejo/governance/src/branch/main/branding).

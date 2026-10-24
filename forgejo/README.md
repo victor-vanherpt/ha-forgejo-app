@@ -17,3 +17,13 @@ See the **Documentation** tab for setup.
 
 [aarch64-shield]: https://img.shields.io/badge/aarch64-yes-green.svg
 [amd64-shield]: https://img.shields.io/badge/amd64-yes-green.svg
+
+## Credits
+
+The Forgejo logo (`icon.png`, `logo.png`) was created by
+[Caesar Schinas](https://caesarschinas.com/) and is licensed under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The images here
+are PNG renderings of the
+[original SVG](https://codeberg.org/forgejo/governance/src/branch/main/branding),
+and are licensed under CC BY-SA 4.0 as well, not under this repository's MIT
+license. This app is not affiliated with the Forgejo project.
