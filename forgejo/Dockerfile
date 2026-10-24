@@ -36,6 +36,9 @@ RUN \
 # Copy root filesystem
 COPY rootfs /
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5m --start-interval=5s \
+    CMD ["curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3000/api/healthz"]
+
 LABEL \
     io.hass.type="app" \
     org.opencontainers.image.title="Home Assistant App: Forgejo" \

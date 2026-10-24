@@ -9,11 +9,9 @@ arch:
   - amd64
 init: false
 startup: services
-boot: auto
 backup: cold
 image: "ghcr.io/victor-vanherpt/ha-forgejo-app"
 webui: "http://[HOST]:[PORT:3000]"
-watchdog: "http://[HOST]:[PORT:3000]/api/healthz"
 ports:
   3000/tcp: 3000
   2222/tcp: 2222

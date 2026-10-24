@@ -103,6 +103,13 @@ read_ports
 wait_healthy
 echo "ok - healthy"
 
+for ((i = 0; i < 30; i++)); do
+  [[ "$(docker inspect -f '{{.State.Health.Status}}' "${name}")" == "healthy" ]] && break
+  sleep 2
+done
+[[ "$(docker inspect -f '{{.State.Health.Status}}' "${name}")" == "healthy" ]] || fail "Docker HEALTHCHECK not healthy"
+echo "ok - Docker HEALTHCHECK healthy"
+
 docker exec "${name}" grep -q '^APP_NAME = Smoke test$' /config/app.ini || fail "env_vars not applied to app.ini"
 docker exec "${name}" grep -q "^DB_TYPE = ${db}$" /config/app.ini || fail "DB_TYPE not set to ${db}"
 docker exec "${name}" grep -q "^ROOT_URL = http://homeassistant.local:3000/$" /config/app.ini || fail "ROOT_URL default not derived from Supervisor"
