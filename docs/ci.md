@@ -1,45 +1,38 @@
 # CI
 
-[`ci.yaml`](../.github/workflows/ci.yaml) runs on pushes to `main` and on every
-PR, including PRs from forks.
-
-It is triggered by `pull_request_target`, so it always runs **as defined on
-`main`**: workflow changes in a PR don't run until the PR is reviewed and
-merged. Check them locally with `mise run ci` (see
-[Development](development.md#before-pushing)). The PR's code is checked out
-explicitly.
+[`ci.yaml`](../.github/workflows/ci.yaml) runs on pushes to `main` and on
+every PR. PRs run their own copy of the workflow, so workflow changes are
+tested in the PR itself. Check them locally first with `mise run ci` (see
+[Development](development.md#before-pushing)).
 
 ## Jobs
 
-1. **Authorize / Approval**: decides whether the run may start (see below).
-2. **Lint**: `mise run lint` and the Home Assistant app linter.
-3. **Version**: `mise run version:check`.
-4. **Build**: per architecture on native runners, then smoke tests (SQLite on
+1. **Lint**: `mise run lint` and the Home Assistant app linter.
+2. **Version**: `mise run version:check`.
+3. **Build**: per architecture on native runners, then smoke tests (SQLite on
    both, PostgreSQL and MariaDB on amd64).
-5. **Publish**: pushes the images and the multi-arch manifest to
+4. **Publish**: pushes the images and the multi-arch manifest to
    `ghcr.io/victor-vanherpt/ha-forgejo-app`.
-6. **Release** (`main`): GitHub release `<version>` with the changelog notes.
+5. **Release** (`main`): GitHub release `<version>` with the changelog notes.
    **Prerelease** (PRs): see [PR prereleases](#pr-prereleases).
-7. **CI result**: fails unless every job that should have run succeeded. It is
+6. **CI result**: fails unless every job that should have run succeeded. It is
    the only required status check, so a skipped, rejected or failed run never
    counts as passing.
 
 ## Who can run CI
 
-PRs from this repository whose author, and the user who pushed or re-ran, are
-allowed run straight away. Allowed users are the repository variable
-`CI_AUTHORS` (a JSON list of logins, e.g. `["victor-vanherpt", "renovate[bot]"]`),
-or only the repository owner when it isn't set.
-
-Every other PR, including all PRs from forks, waits until a reviewer approves
-the run in the `ci-approval` environment (from the run: **Review deployments**
-→ `ci-approval` → **Approve**). **Review the diff before approving**: the run
-executes the PR's code (mise tasks, Dockerfile, smoke test) with permission to
-publish images and prereleases. Each new push to the PR needs a new approval.
+- **Branches in this repository** (only people with write access can push
+  them) run straight away, with permission to publish prereleases.
+- **PRs from forks** only run after you approve them (the run shows
+  **Approve and run workflows**; see
+  [Repository settings](repository-settings.md)). **Review the diff first,
+  including any workflow changes**: the run executes the PR's code and its copy
+  of the workflow. Fork runs get a read-only token, so they build and test but
+  publish no prerelease.
 
 ## PR prereleases
 
-Every push to a PR (once authorized or approved) publishes a prerelease
+Every push to a PR from a branch in this repository publishes a prerelease
 `<version>-pr-<number>-<commits>-<short sha>`, e.g. `17.0.0-3-pr-12-004-a8aa8e0`
 for the 4th commit of PR #12 (see `mise run version:pr`). The zero-padded
 commit count makes a PR's prereleases sort in order; each push is a new
@@ -74,5 +67,4 @@ advises against upgrading to a release.
 PRs created with the workflow's own token don't start other workflows, so CI
 only runs on the update PR automatically when the `FORGEJO_UPDATE_TOKEN`
 secret is set (see [Repository settings](repository-settings.md)). Without
-it, close and reopen the PR to start CI; it then waits for approval, since
-its author is `github-actions[bot]`.
+it, close and reopen the PR to start CI.
