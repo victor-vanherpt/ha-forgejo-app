@@ -1,7 +1,10 @@
 name: CI
 
+# pull_request_target runs this workflow as it is on main, never a PR's copy, so
+# workflow changes only run once reviewed and merged. The PR's code is checked
+# out explicitly, after Authorize/Approval. "CI result" is the required check.
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
   push:
@@ -9,52 +12,115 @@ on:
       - main
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 permissions:
   contents: read
 
+env:
+  # The PR's head commit, or the pushed commit on main
+  REF: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
+  # Pushes to main and PRs from this repository by allowed users run straight
+  # away. Every other PR, including all PRs from forks, waits for a reviewer of
+  # the protected ci-approval environment, because the jobs run the PR's code.
+  # Allowed users: the CI_AUTHORS repository variable (a JSON list of logins),
+  # or the repository owner when it isn't set. Both the PR author and the user
+  # who triggered the run (pushed, re-ran) must be allowed.
+  authorize:
+    name: Authorize
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      environment: ${{ steps.check.outputs.environment }}
+    steps:
+      - name: Check who is running CI
+        id: check
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+          ALLOWED: ${{ vars.CI_AUTHORS || format('["{0}"]', github.repository_owner) }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          allowed() {
+            jq -e --arg login "${1}" 'map(ascii_downcase) | index($login | ascii_downcase)' <<< "${ALLOWED}" > /dev/null
+          }
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            environment=ci
+          elif [[ "${SAME_REPO}" == "true" ]] && allowed "${AUTHOR}" && allowed "${ACTOR}"; then
+            environment=ci
+          else
+            echo "::notice::PR by ${AUTHOR} (triggered by ${ACTOR}, same repository: ${SAME_REPO}) waits for approval"
+            # Fail closed: an unprotected environment would let the run through
+            reviewers=$(gh api "repos/${GH_REPO}/environments/ci-approval" \
+              --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2> /dev/null || echo 0)
+            if [[ "${reviewers}" == "0" ]]; then
+              echo "::error::Environment ci-approval is missing or has no required reviewers (see README)"
+              exit 1
+            fi
+            environment=ci-approval
+          fi
+          echo "environment=${environment}" >> "$GITHUB_OUTPUT"
+
+  approval:
+    name: Approval
+    needs: authorize
+    runs-on: ubuntu-latest
+    environment: ${{ needs.authorize.outputs.environment }}
+    steps:
+      - name: Authorized
+        env:
+          ENVIRONMENT: ${{ needs.authorize.outputs.environment }}
+        run: echo "Authorized through the ${ENVIRONMENT} environment"
+
   lint:
     name: Lint
+    needs: approval
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
 
       - name: Lint
         run: mise run lint
 
       - name: Lint app
-        uses: frenck/action-addon-linter@v2.21.1
+        uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
         with:
           path: ./forgejo
 
   version:
     name: Version
+    needs: approval
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.release.outputs.release }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.REF }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install_args: jq yq
 
       - name: Check version (pull request)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         run: mise run version:check --base "origin/${GITHUB_BASE_REF}"
 
       - name: Check version (release commit)
@@ -87,18 +153,18 @@ jobs:
       version: ${{ steps.info.outputs.version }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install_args: jq yq
 
-      # Releases from main publish <version> and latest. Pull requests from this
-      # repository publish a <version>-pr-<number>-<commits>-<short sha> prerelease; forks
-      # can't push.
+      # Releases from main publish <version> and latest. Pull requests publish a
+      # <version>-pr-<number>-<commits>-<short sha> prerelease.
       - name: Get app information
         id: info
         env:
@@ -106,13 +172,12 @@ jobs:
           PR_COMMITS: ${{ github.event.pull_request.commits }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RELEASE: ${{ needs.version.outputs.release }}
-          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           image=$(yq '.image' forgejo/config.yaml)
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
             version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}" --commits "${PR_COMMITS}")
             tags=${version}
-            publish=${SAME_REPO}
+            publish=true
           else
             version=$(yq '.version' forgejo/config.yaml)
             tags="${version}"$'\n'"latest"
@@ -131,7 +196,7 @@ jobs:
 
       - name: Prepare build matrix
         id: matrix
-        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.09.0
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
           architectures: ${{ steps.info.outputs.architectures }}
           image-name: ${{ steps.info.outputs.image_name }}
@@ -152,12 +217,13 @@ jobs:
       IMAGE: ${{ matrix.image }}:${{ needs.prepare.outputs.version }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Build image
-        uses: home-assistant/builder/actions/build-image@2026.09.0
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
           arch: ${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
@@ -168,7 +234,7 @@ jobs:
           version: ${{ needs.prepare.outputs.version }}
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install_args: jq
 
@@ -186,7 +252,7 @@ jobs:
       # Same build, served from the cache filled above, now pushed and signed
       - name: Publish image
         if: needs.prepare.outputs.publish == 'true'
-        uses: home-assistant/builder/actions/build-image@2026.09.0
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
           arch: ${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
@@ -206,7 +272,7 @@ jobs:
       packages: write
     steps:
       - name: Publish multi-arch manifest
-        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.09.0
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
           architectures: ${{ needs.prepare.outputs.architectures }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
@@ -223,8 +289,9 @@ jobs:
       contents: write
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       - name: Create GitHub release
@@ -246,7 +313,7 @@ jobs:
   prerelease:
     name: Prerelease
     needs: [prepare, publish]
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -259,8 +326,9 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.REF }}
           persist-credentials: false
 
       # A branch with only what Home Assistant reads (repository.yaml and the
@@ -295,7 +363,7 @@ jobs:
           gh release create "${VERSION}" \
             --prerelease \
             --latest=false \
-            --target "${HEAD_SHA}" \
+            --target "${BRANCH}" \
             --title "${VERSION}" \
             --notes "Prerelease of #${PR_NUMBER} at ${HEAD_SHA}.
 
@@ -304,3 +372,38 @@ jobs:
           \`https://github.com/${GH_REPO}#${BRANCH}\`
 
           Image: \`${IMAGE}:${VERSION}\`"
+
+  # The single required status check: fails unless every job that should have
+  # run succeeded, so skipped, rejected or failed runs never count as passing.
+  result:
+    name: CI result
+    needs: [authorize, approval, lint, version, prepare, build, publish, release, prerelease]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          required="authorize approval lint version prepare build"
+          if [[ "${PUBLISH}" == "true" ]]; then
+            required+=" publish"
+            if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              required+=" release"
+            else
+              required+=" prerelease"
+            fi
+          fi
+          failed=""
+          for job in ${required}; do
+            result=$(jq -r --arg job "${job}" '.[$job].result' <<< "${NEEDS}")
+            if [[ "${result}" != "success" ]]; then
+              failed+=" ${job}=${result}"
+            fi
+          done
+          if [[ -n "${failed}" ]]; then
+            echo "::error::Not successful:${failed}"
+            exit 1
+          fi
+          echo "All required jobs succeeded: ${required}"

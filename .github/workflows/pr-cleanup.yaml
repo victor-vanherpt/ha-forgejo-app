@@ -1,9 +1,9 @@
 name: PR cleanup
 
 # Remove a PR's prerelease (GitHub release, pr/<number> branch and images)
-# once it is merged or closed.
+# once it is merged or closed. pull_request_target: runs as defined on main.
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
     types:
@@ -15,7 +15,6 @@ permissions:
 jobs:
   cleanup:
     name: Clean up prerelease
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,13 +25,13 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install_args: yq
 
