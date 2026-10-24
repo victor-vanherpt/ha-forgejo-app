@@ -1,0 +1,75 @@
+configuration:
+  server:
+    name: Servidor
+    description: Paràmetres de la secció [server] d'app.ini.
+    fields:
+      root_url:
+        name: URL arrel (ROOT_URL)
+        description: >-
+          URL pública des de la qual s'accedeix a Forgejo, p. ex.
+          https://git.example.com/. Si es deixa buida, es manté el valor
+          d'app.ini.
+      ssh_domain:
+        name: Domini SSH (SSH_DOMAIN)
+        description: >-
+          Domini que apareix en les URL de clonatge per SSH. Si es deixa buit,
+          es manté el valor d'app.ini.
+      ssh_port:
+        name: Port SSH (SSH_PORT)
+        description: >-
+          Port que apareix en les URL de clonatge per SSH. Indiqueu-lo si l'SSH
+          és accessible per un port diferent de l'assignat a l'amfitrió.
+  service:
+    name: Servei
+    description: Paràmetres de la secció [service] d'app.ini.
+    fields:
+      disable_registration:
+        name: Desactiva el registre (DISABLE_REGISTRATION)
+        description: >-
+          Impedeix el registre d'usuaris nous. Activeu-ho després de crear
+          el primer compte (administrador).
+  database:
+    name: Base de dades
+    description: Paràmetres de la secció [database] d'app.ini.
+    fields:
+      db_type:
+        name: Tipus de base de dades (DB_TYPE)
+        description: >-
+          sqlite3 guarda la base de dades dins de l'app. postgres o mysql fan
+          servir un servidor extern. Canviar-lo no migra les dades existents.
+      host:
+        name: Amfitrió (HOST)
+        description: >-
+          Servidor de base de dades com a amfitrió:port. Per a mysql, deixeu-lo
+          buit per a fer servir l'app MariaDB.
+      name:
+        name: Nom de la base de dades (NAME)
+        description: Nom de la base de dades. Per defecte, forgejo.
+      user:
+        name: Usuari (USER)
+        description: Usuari de la base de dades.
+      passwd:
+        name: Contrasenya (PASSWD)
+        description: Contrasenya de la base de dades.
+      ssl_mode:
+        name: Mode SSL (SSL_MODE)
+        description: Només PostgreSQL. Mode TLS de la connexió.
+      schema:
+        name: Esquema (SCHEMA)
+        description: Només PostgreSQL. Esquema a utilitzar en lloc del predeterminat.
+  log:
+    name: Registre
+    description: Paràmetres de la secció [log] d'app.ini.
+    fields:
+      level:
+        name: Nivell de registre (LEVEL)
+        description: Quant de detall escriuen Forgejo i l'app al registre.
+  env_vars:
+    name: Paràmetres addicionals
+    description: >-
+      Qualsevol altre paràmetre d'app.ini, amb el format de les variables
+      d'entorn de Forgejo: FORGEJO__secció__CLAU (p. ex.
+      FORGEJO__mailer__ENABLED). S'apliquen en cada arrencada.
+network:
+  3000/tcp: Interfície web (HTTP)
+  2222/tcp: Git per SSH

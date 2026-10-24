@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Lint Dockerfile, shell scripts, YAML, workflows and translations"
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT}"
+
+hadolint forgejo/Dockerfile
+grep -rlE "^#!.*(bash|bashio)" forgejo/rootfs mise-tasks | xargs shellcheck -x
+yamllint --strict .
+actionlint
+
+# Every translation must have the same keys as en.yaml
+keys() {
+  yq '[.. | path | join(".")] | sort | .[]' "${1}"
+}
+for file in forgejo/translations/*.yaml; do
+  if ! diff -u <(keys forgejo/translations/en.yaml) <(keys "${file}") >&2; then
+    echo "${file} does not have the same keys as en.yaml" >&2
+    exit 1
+  fi
+done

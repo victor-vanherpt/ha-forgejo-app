@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#MISE description="Pin Forgejo to the latest stable release, or to a given version"
+#USAGE arg "[version]" help="Forgejo version, e.g. 16.0.6 (default: latest stable release)"
+set -euo pipefail
+
+# shellcheck source=mise-tasks/lib/version.sh
+source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
+cd "${MISE_PROJECT_ROOT}"
+
+readonly API=https://codeberg.org/api/v1/repos/forgejo/forgejo/releases
+
+if [[ -n "${usage_version:-}" ]]; then
+  version=${usage_version#v}
+  release=$(curl -fsSL "${API}/tags/v${version}")
+else
+  # "latest" skips drafts and pre-releases
+  release=$(curl -fsSL "${API}/latest")
+  version=$(jq -r '.tag_name' <<< "${release}")
+  version=${version#v}
+fi
+
+# Map upstream linux binaries to Home Assistant architectures. Only aarch64 and
+# amd64 are supported by the HA base images and builder; armhf etc. are dropped.
+args=()
+arches=()
+for asset in $(jq -r --arg prefix "forgejo-${version}-linux-" \
+  '.assets[].name | select(startswith($prefix)) | select(test("\\.(xz|sha256|asc)$") | not)' <<< "${release}"); do
+  upstream=${asset#"forgejo-${version}-linux-"}
+  case "${upstream}" in
+    amd64) arch=amd64 ;;
+    arm64) arch=aarch64 ;;
+    *)
+      echo "Skipping linux-${upstream}: not supported by Home Assistant apps" >&2
+      continue
+      ;;
+  esac
+  sha256=$(jq -r --arg name "${asset}.sha256" '.assets[] | select(.name == $name) | .browser_download_url' <<< "${release}" \
+    | xargs curl -fsSL | awk '{ print $1 }')
+  if [[ ! "${sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "No valid sha256 for ${asset}" >&2
+    exit 1
+  fi
+  args+=("ARG FORGEJO_SHA256_$(tr '[:lower:]-' '[:upper:]_' <<< "${upstream}")=${sha256}")
+  arches+=("${arch}")
+done
+
+if ((${#arches[@]} == 0)); then
+  echo "Forgejo ${version} has no supported linux binaries" >&2
+  exit 1
+fi
+
+# Rewrite the managed ARGs: version followed by one checksum per architecture
+PIN_VERSION="ARG FORGEJO_VERSION=${version}" PIN_CHECKSUMS="$(printf '%s\n' "${args[@]}")" awk '
+  /^ARG FORGEJO_SHA256_/ { next }
+  /^ARG FORGEJO_VERSION=/ { print ENVIRON["PIN_VERSION"]; print ENVIRON["PIN_CHECKSUMS"]; next }
+  { print }
+' "${DOCKERFILE}" > "${DOCKERFILE}.tmp"
+mv "${DOCKERFILE}.tmp" "${DOCKERFILE}"
+
+arch_json=$(printf '%s\n' "${arches[@]}" | sort | jq -Rnc '[inputs]')
+yq -i ".arch = ${arch_json}" "${CONFIG}"
+
+echo "Pinned Forgejo ${version} (${arches[*]})"
+mise run bump

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="Check the app version matches <forgejo>-<commit count> and has changelog notes"
+#USAGE flag "--base <ref>" help="Branch the change merges into (PRs). Without it, checks HEAD is the release commit."
+set -euo pipefail
+
+# shellcheck source=mise-tasks/lib/version.sh
+source "${MISE_PROJECT_ROOT}/mise-tasks/lib/version.sh"
+cd "${MISE_PROJECT_ROOT}"
+
+version=$(app_version)
+forgejo=$(forgejo_version)
+
+if [[ -n "${usage_base:-}" ]]; then
+  expected="${forgejo}-$(($(commit_count "${usage_base}") + 1))"
+  hint="${usage_base} will have after a squash merge"
+else
+  expected="${forgejo}-$(commit_count HEAD)"
+  hint="HEAD has"
+fi
+
+errors=0
+if [[ "${version}" != "${expected}" ]]; then
+  echo "::error file=${CONFIG}::version is ${version}, expected ${expected} (Forgejo ${forgejo}, commit count ${hint}). Run: mise run bump" >&2
+  errors=1
+fi
+if [[ -z "$(changelog_section "${version}")" ]]; then
+  echo "::error file=${CHANGELOG}::no notes under '## ${version}'. Run: mise run bump, then describe the change" >&2
+  errors=1
+fi
+
+if ((errors)); then
+  exit 1
+fi
+echo "Version ${version} is correct"

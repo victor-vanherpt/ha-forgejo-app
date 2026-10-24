@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Build the app image locally as local/forgejo:<arch>"
+#USAGE arg "[arch]" help="aarch64 or amd64 (default: host architecture)" default=""
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT}"
+
+arch=${usage_arch:-$(uname -m)}
+case "${arch}" in
+  aarch64 | arm64) arch=aarch64 platform=linux/arm64 ;;
+  amd64 | x86_64) arch=amd64 platform=linux/amd64 ;;
+  *)
+    echo "Unsupported architecture: ${arch}" >&2
+    exit 1
+    ;;
+esac
+
+docker buildx build --platform "${platform}" --load -t "local/forgejo:${arch}" forgejo

@@ -1,0 +1,306 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@v5.2.2
+
+      - name: Lint
+        run: mise run lint
+
+      - name: Lint app
+        uses: frenck/action-addon-linter@v2.21.1
+        with:
+          path: ./forgejo
+
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.release.outputs.release }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@v5.2.2
+        with:
+          install_args: jq yq
+
+      - name: Check version (pull request)
+        if: github.event_name == 'pull_request'
+        run: mise run version:check --base "origin/${GITHUB_BASE_REF}"
+
+      - name: Check version (release commit)
+        if: github.event_name == 'push'
+        run: mise run version:check
+
+      - name: Decide whether to release
+        id: release
+        if: github.event_name == 'push'
+        run: |
+          version=$(yq '.version' forgejo/config.yaml)
+          if git ls-remote --exit-code --tags origin "refs/tags/${version}" > /dev/null; then
+            echo "::notice::${version} is already released, not publishing again"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  prepare:
+    name: Prepare
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      architectures: ${{ steps.info.outputs.architectures }}
+      build_matrix: ${{ steps.matrix.outputs.matrix }}
+      image_name: ${{ steps.info.outputs.image_name }}
+      image_tags: ${{ steps.info.outputs.image_tags }}
+      publish: ${{ steps.info.outputs.publish }}
+      registry_prefix: ${{ steps.info.outputs.registry_prefix }}
+      version: ${{ steps.info.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@v5.2.2
+        with:
+          install_args: jq yq
+
+      # Releases from main publish <version> and latest. Pull requests from this
+      # repository publish a <version>-pr-<number>-<commits>-<short sha> prerelease; forks
+      # can't push.
+      - name: Get app information
+        id: info
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RELEASE: ${{ needs.version.outputs.release }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          image=$(yq '.image' forgejo/config.yaml)
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            version=$(mise run -q version:pr "${PR_NUMBER}" --sha "${HEAD_SHA}" --commits "${PR_COMMITS}")
+            tags=${version}
+            publish=${SAME_REPO}
+          else
+            version=$(yq '.version' forgejo/config.yaml)
+            tags="${version}"$'\n'"latest"
+            publish=${RELEASE}
+          fi
+          {
+            echo "architectures=$(yq -o=json -I=0 '.arch' forgejo/config.yaml)"
+            echo "image_name=${image##*/}"
+            echo "registry_prefix=${image%/*}"
+            echo "version=${version}"
+            echo "publish=${publish}"
+            echo "image_tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.09.0
+        with:
+          architectures: ${{ steps.info.outputs.architectures }}
+          image-name: ${{ steps.info.outputs.image_name }}
+          registry-prefix: ${{ steps.info.outputs.registry_prefix }}
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
+    env:
+      IMAGE: ${{ matrix.image }}:${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        uses: home-assistant/builder/actions/build-image@2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./forgejo
+          image: ${{ matrix.image }}
+          image-tags: ${{ needs.prepare.outputs.version }}
+          load: true
+          version: ${{ needs.prepare.outputs.version }}
+
+      - name: Set up mise
+        uses: jdx/mise-action@v5.2.2
+        with:
+          install_args: jq
+
+      - name: Smoke test (SQLite)
+        run: mise run test "${IMAGE}"
+
+      - name: Smoke test (PostgreSQL)
+        if: matrix.arch == 'amd64'
+        run: mise run test --db postgres "${IMAGE}"
+
+      - name: Smoke test (MariaDB app)
+        if: matrix.arch == 'amd64'
+        run: mise run test --db mysql "${IMAGE}"
+
+      # Same build, served from the cache filled above, now pushed and signed
+      - name: Publish image
+        if: needs.prepare.outputs.publish == 'true'
+        uses: home-assistant/builder/actions/build-image@2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./forgejo
+          image: ${{ matrix.image }}
+          image-tags: ${{ needs.prepare.outputs.image_tags }}
+          push: true
+          version: ${{ needs.prepare.outputs.version }}
+
+  publish:
+    name: Publish
+    needs: [lint, prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.09.0
+        with:
+          architectures: ${{ needs.prepare.outputs.architectures }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ needs.prepare.outputs.image_name }}
+          image-tags: ${{ needs.prepare.outputs.image_tags }}
+          registry-prefix: ${{ needs.prepare.outputs.registry_prefix }}
+
+  release:
+    name: Release
+    needs: [prepare, publish]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          awk -v heading="## ${VERSION}" '
+            $0 == heading { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' forgejo/CHANGELOG.md > notes.md
+          gh release create "${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --notes-file notes.md \
+            --latest
+
+  prerelease:
+    name: Prerelease
+    needs: [prepare, publish]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      IMAGE: ${{ needs.prepare.outputs.registry_prefix }}/${{ needs.prepare.outputs.image_name }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # A branch with only what Home Assistant reads (repository.yaml and the
+      # app), with the prerelease version, so it can be added as a repository.
+      # Its name stays the same for the whole PR; each push is an app update.
+      - name: Publish Home Assistant repository branch
+        id: branch
+        run: |
+          branch="pr/${PR_NUMBER}"
+          dir=$(mktemp -d)
+          cp -R repository.yaml forgejo "${dir}/"
+          yq -i ".version = \"${VERSION}\" | .name = \"Forgejo (PR #${PR_NUMBER})\"" "${dir}/forgejo/config.yaml"
+          yq -i ".name = \"Forgejo app repository (PR #${PR_NUMBER})\"" "${dir}/repository.yaml"
+          git -C "${dir}" init -q -b "${branch}"
+          git -C "${dir}" add -A
+          git -C "${dir}" \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Prerelease ${VERSION} from PR #${PR_NUMBER} (${HEAD_SHA})"
+          git -C "${dir}" push -q -f \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${branch}"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub prerelease
+        env:
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          # One prerelease per PR: drop earlier ones (<version>-pr-<number>-<commits>-<sha>)
+          gh release list --limit 200 --json tagName --jq '.[].tagName' \
+            | { grep -E -- "-pr-${PR_NUMBER}-[0-9]{3,}-[0-9a-f]{7}$" || true; } \
+            | xargs -r -n 1 gh release delete --cleanup-tag --yes
+          gh release create "${VERSION}" \
+            --prerelease \
+            --latest=false \
+            --target "${HEAD_SHA}" \
+            --title "${VERSION}" \
+            --notes "Prerelease of #${PR_NUMBER} at ${HEAD_SHA}.
+
+          To install it in Home Assistant, add this repository URL:
+
+          \`https://github.com/${GH_REPO}#${BRANCH}\`
+
+          Image: \`${IMAGE}:${VERSION}\`"

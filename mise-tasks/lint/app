@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Run Home Assistant's app linter (same version as CI)"
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT}"
+
+# Use the exact linter release the workflow pins
+uses=$(yq '.jobs.lint.steps[] | select(.uses // "" | test("action-addon-linter")) | .uses' .github/workflows/ci.yaml)
+repo=${uses%@*}
+ref=${uses#*@}
+image="local/app-linter:${ref}"
+
+if ! docker image inspect "${image}" > /dev/null 2>&1; then
+  echo "Building ${repo}@${ref}..."
+  docker build -q -t "${image}" "https://github.com/${repo}.git#${ref}:src" > /dev/null
+fi
+
+docker run --rm \
+  -e INPUT_PATH=/repo/forgejo \
+  -e INPUT_COMMUNITY=false \
+  -v "${PWD}:/repo:ro" \
+  "${image}"
