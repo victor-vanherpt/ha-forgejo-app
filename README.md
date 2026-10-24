@@ -50,10 +50,17 @@ Assistant supports (`aarch64`, `amd64`).
 ### CI
 
 [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) runs on `main` and on
-PRs opened from a branch in this repository (not forks) whose author, and the
-user who pushed or re-ran, are allowed: the repository variable `CI_AUTHORS`
-(a JSON list of logins, e.g. `["victor-vanherpt", "renovate[bot]"]`), or only
-the repository owner when it isn't set. It is triggered by
+PRs opened from a branch in this repository. PRs from forks fail.
+
+- **Authorize / Approval**: PRs whose author, and the user who pushed or
+  re-ran, are allowed run straight away. Allowed users are the repository
+  variable `CI_AUTHORS` (a JSON list of logins, e.g.
+  `["victor-vanherpt", "renovate[bot]"]`), or only the repository owner when it
+  isn't set. Other PRs wait until a reviewer approves the run in the
+  `ci-approval` environment.
+- **CI result**: fails unless every job that should have run succeeded. It is
+  the only required status check, so a skipped, rejected or failed run never
+  counts as passing. It is triggered by
 `pull_request_target`, so it always runs **as defined on `main`**: workflow
 changes in a PR don't run until the PR is reviewed and merged (check them with
 `mise run ci` before pushing). The PR's code is checked out explicitly.
@@ -93,10 +100,13 @@ the branch and the images. PRs from forks are not built at all.
   `ha-forgejo-app`, `aarch64-ha-forgejo-app` and `amd64-ha-forgejo-app`
   packages public (GitHub → Packages → Package settings), or Home Assistant
   can't pull them.
+- Environments → **New environment** `ci-approval`: add the people who may
+  approve CI runs under **Required reviewers**. Without it, PRs that need
+  approval fail at **Authorize**. (The `ci` environment is created
+  automatically and needs no protection.)
 - General → Pull requests: allow **squash merging** only.
-- Rulesets for `main`: require a pull request, require the status checks
-  **Lint**, **Version**, **Build aarch64** and **Build amd64**, and require
-  branches to be up to date before merging.
+- Rulesets for `main`: require a pull request, require the status check
+  **CI result**, and require branches to be up to date before merging.
 
 ## License
 

@@ -2,7 +2,7 @@ name: CI
 
 # pull_request_target runs this workflow as it is on main, never a PR's copy, so
 # workflow changes only run once reviewed and merged. The PR's code is checked
-# out explicitly.
+# out explicitly, after Authorize/Approval. "CI result" is the required check.
 on:
   pull_request_target:
     branches:
@@ -23,20 +23,66 @@ env:
   REF: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  # Pushes to main and PRs by allowed users run straight away. PRs by anyone
+  # else wait for a reviewer of the protected ci-approval environment. PRs from
+  # forks fail. Allowed users: the CI_AUTHORS repository variable (a JSON list
+  # of logins), or the repository owner when it isn't set. Both the PR author
+  # and the user who triggered the run (pushed, re-ran) must be allowed.
+  authorize:
+    name: Authorize
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      environment: ${{ steps.check.outputs.environment }}
+    steps:
+      - name: Check who is running CI
+        id: check
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+          ALLOWED: ${{ vars.CI_AUTHORS || format('["{0}"]', github.repository_owner) }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          allowed() {
+            jq -e --arg login "${1}" 'map(ascii_downcase) | index($login | ascii_downcase)' <<< "${ALLOWED}" > /dev/null
+          }
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            environment=ci
+          elif [[ "${SAME_REPO}" != "true" ]]; then
+            echo "::error::Pull requests from forks are not built"
+            exit 1
+          elif allowed "${AUTHOR}" && allowed "${ACTOR}"; then
+            environment=ci
+          else
+            echo "::notice::${AUTHOR} (triggered by ${ACTOR}) is not in CI_AUTHORS: waiting for approval"
+            # Fail closed: an unprotected environment would let the run through
+            reviewers=$(gh api "repos/${GH_REPO}/environments/ci-approval" \
+              --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length' 2> /dev/null || echo 0)
+            if [[ "${reviewers}" == "0" ]]; then
+              echo "::error::Environment ci-approval is missing or has no required reviewers (see README)"
+              exit 1
+            fi
+            environment=ci-approval
+          fi
+          echo "environment=${environment}" >> "$GITHUB_OUTPUT"
+
+  approval:
+    name: Approval
+    needs: authorize
+    runs-on: ubuntu-latest
+    environment: ${{ needs.authorize.outputs.environment }}
+    steps:
+      - name: Authorized
+        env:
+          ENVIRONMENT: ${{ needs.authorize.outputs.environment }}
+        run: echo "Authorized through the ${ENVIRONMENT} environment"
+
   lint:
     name: Lint
-    # PRs only run when opened from a branch in this repository (not a fork), by
-    # an allowed author, and triggered (pushed, re-run) by an allowed user. The
-    # allowlist is the CI_AUTHORS repository variable, a JSON list of logins,
-    # defaulting to the repository owner.
-    if: >-
-      github.event_name == 'push' || (
-        github.event.pull_request.head.repo.full_name == github.repository
-        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
-          github.event.pull_request.user.login)
-        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
-          github.triggering_actor)
-      )
+    needs: approval
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
@@ -58,18 +104,7 @@ jobs:
 
   version:
     name: Version
-    # PRs only run when opened from a branch in this repository (not a fork), by
-    # an allowed author, and triggered (pushed, re-run) by an allowed user. The
-    # allowlist is the CI_AUTHORS repository variable, a JSON list of logins,
-    # defaulting to the repository owner.
-    if: >-
-      github.event_name == 'push' || (
-        github.event.pull_request.head.repo.full_name == github.repository
-        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
-          github.event.pull_request.user.login)
-        && contains(fromJSON(vars.CI_AUTHORS || format('["{0}"]', github.repository_owner)),
-          github.triggering_actor)
-      )
+    needs: approval
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.release.outputs.release }}
@@ -339,3 +374,38 @@ jobs:
           \`https://github.com/${GH_REPO}#${BRANCH}\`
 
           Image: \`${IMAGE}:${VERSION}\`"
+
+  # The single required status check: fails unless every job that should have
+  # run succeeded, so skipped, rejected or failed runs never count as passing.
+  result:
+    name: CI result
+    needs: [authorize, approval, lint, version, prepare, build, publish, release, prerelease]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          required="authorize approval lint version prepare build"
+          if [[ "${PUBLISH}" == "true" ]]; then
+            required+=" publish"
+            if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              required+=" release"
+            else
+              required+=" prerelease"
+            fi
+          fi
+          failed=""
+          for job in ${required}; do
+            result=$(jq -r --arg job "${job}" '.[$job].result' <<< "${NEEDS}")
+            if [[ "${result}" != "success" ]]; then
+              failed+=" ${job}=${result}"
+            fi
+          done
+          if [[ -n "${failed}" ]]; then
+            echo "::error::Not successful:${failed}"
+            exit 1
+          fi
+          echo "All required jobs succeeded: ${required}"
