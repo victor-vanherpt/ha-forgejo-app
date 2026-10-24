@@ -1,6 +1,6 @@
 # https://contributors.home-assistant.io/apps/reference/configuration/
 name: Forgejo
-version: "17.0.0-23"
+version: "17.0.0-24"
 slug: forgejo
 description: A self-hosted lightweight software forge
 url: "https://github.com/victor-vanherpt/ha-forgejo-app/tree/main/forgejo"

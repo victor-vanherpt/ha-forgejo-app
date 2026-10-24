@@ -13,7 +13,9 @@ tested in the PR itself. Check them locally first with `mise run ci` (see
    both, PostgreSQL and MariaDB on amd64).
 4. **Publish**: pushes the images and the multi-arch manifest to
    `ghcr.io/victor-vanherpt/ha-forgejo-app`.
-5. **Release** (`main`): GitHub release `<version>` with the changelog notes.
+5. **Release** (`main`): GitHub release `<version>` with the changelog notes,
+   the image digests, how to verify the images' cosign signature, and the
+   upstream Forgejo checksums (`mise run release:notes`).
    **Prerelease** (PRs): see [PR prereleases](#pr-prereleases).
 6. **CI result**: fails unless every job that should have run succeeded. It is
    the only required status check, so a skipped, rejected or failed run never

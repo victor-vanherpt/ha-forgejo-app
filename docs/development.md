@@ -15,6 +15,7 @@ then `mise tasks` to see what's available. Tasks are scripts in
 | `mise run bump` | Set the app version for the next commit on `main` |
 | `mise run version:check [--base ref]` | Check the version and changelog (CI runs this) |
 | `mise run version:pr <number>` | Print a PR's prerelease version (see [CI](ci.md#pr-prereleases)) |
+| `mise run release:notes [version]` | Print the release notes CI publishes for a released version (needs Docker) |
 
 ## Before pushing
 
