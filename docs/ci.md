@@ -58,3 +58,21 @@ when done.
 When the PR is merged or closed,
 [`pr-cleanup.yaml`](../.github/workflows/pr-cleanup.yaml) deletes the
 prerelease, the branch and the images.
+
+## Nightly Forgejo updates
+
+[`forgejo-update.yaml`](../.github/workflows/forgejo-update.yaml) runs every
+night (and on demand from the Actions tab). It runs `mise run forgejo:pin` on
+top of `main` and, when a newer stable Forgejo release exists, opens a PR from
+the `forgejo-update` branch with the new version, checksums, app version and
+changelog entry. If that PR is still open when `main` moves on, the next run
+refreshes it, so its version keeps matching what a squash merge will produce.
+
+Check the linked Forgejo release notes before merging: Forgejo sometimes
+advises against upgrading to a release.
+
+PRs created with the workflow's own token don't start other workflows, so CI
+only runs on the update PR automatically when the `FORGEJO_UPDATE_TOKEN`
+secret is set (see [Repository settings](repository-settings.md)). Without
+it, close and reopen the PR to start CI; it then waits for approval, since
+its author is `github-actions[bot]`.
