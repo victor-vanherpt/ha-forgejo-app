@@ -1,5 +1,9 @@
 # Changelog
 
+## 17.0.1-25
+
+- Update Forgejo to [17.0.1](https://codeberg.org/forgejo/forgejo/releases/tag/v17.0.1)
+
 ## 17.0.0-24
 
 - Release notes list the published image digests, how to verify the images' cosign signature, and the upstream Forgejo checksums
