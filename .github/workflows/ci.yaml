@@ -147,8 +147,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
-      id-token: write
-      packages: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
@@ -187,9 +185,28 @@ jobs:
         if: matrix.arch == 'amd64'
         run: mise run test --db mysql "${IMAGE}"
 
-      # Same build, served from the cache filled above, now pushed and signed
+  # Same build, served from the cache the build job filled, now pushed and signed.
+  # A separate job so the repository scripts the smoke tests run can't publish
+  # or sign anything: only this job has those permissions, and it runs none.
+  push:
+    name: Push ${{ matrix.arch }}
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Publish image
-        if: needs.prepare.outputs.publish == 'true'
         uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
           arch: ${{ matrix.arch }}
@@ -202,7 +219,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [lint, prepare, build]
+    needs: [lint, prepare, push]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -316,7 +333,7 @@ jobs:
   # run succeeded, so skipped, rejected or failed runs never count as passing.
   result:
     name: CI result
-    needs: [lint, version, prepare, build, publish, release, prerelease]
+    needs: [lint, version, prepare, build, push, publish, release, prerelease]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -327,7 +344,7 @@ jobs:
         run: |
           required="lint version prepare build"
           if [[ "${PUBLISH}" == "true" ]]; then
-            required+=" publish"
+            required+=" push publish"
             if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
               required+=" release"
             else
