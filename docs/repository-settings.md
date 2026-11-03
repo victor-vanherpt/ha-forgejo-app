@@ -37,14 +37,15 @@ One-time GitHub settings that [CI](ci.md) relies on.
   packages permissions**, so tokens are read-only unless a job asks for more
   (the jobs here request exactly what they need).
 - **Secrets and variables → Actions → New repository secret**
-  `FORGEJO_UPDATE_TOKEN` (optional): a
+  `FORGEJO_UPDATE_TOKEN`: a
   [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
   with access to only this repository and the **Contents** and **Pull
-  requests** permissions set to read and write. The nightly
-  [Forgejo update](ci.md#nightly-forgejo-updates) uses it so its PRs start
-  CI. Without it, also enable **Actions → General → Workflow permissions →
-  Allow GitHub Actions to create and approve pull requests**, or the workflow
-  can't open the PR.
-- **Rules → Rulesets** for `main`: require a pull request, require the status
-  check **CI result**, and require branches to be up to date before merging.
-  The check can only be selected after it has run once.
+  requests** permissions set to read and write, and a short expiry. The nightly
+  [Forgejo update](ci.md#nightly-forgejo-updates) needs it to push and open its
+  PRs so that they start CI. Don't grant it the **Workflows** permission: that
+  would let the token rewrite the pipeline.
+- **Rules → Rulesets** for the default branch, set to **Active** with no bypass
+  list: restrict deletions, block force pushes, require a pull request (squash
+  only), and require the status check **CI result** with branches up to date
+  before merging. The check can only be selected after it has run once. Without
+  this, the token above could release directly by pushing to `main`.

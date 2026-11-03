@@ -11,8 +11,9 @@ tested in the PR itself. Check them locally first with `mise run ci` (see
 2. **Version**: `mise run version:check`.
 3. **Build**: per architecture on native runners, then smoke tests (SQLite on
    both, PostgreSQL and MariaDB on amd64).
-4. **Publish**: pushes the images and the multi-arch manifest to
-   `ghcr.io/victor-vanherpt/ha-forgejo-app`.
+4. **Push** and **Publish**: push and sign the images (a separate per-architecture
+   job, so the smoke tests run without permission to publish or sign), then the
+   multi-arch manifest, to `ghcr.io/victor-vanherpt/ha-forgejo-app`.
 5. **Release** (`main`): GitHub release `<version>` with the changelog notes,
    the image digests, how to verify the images' cosign signature, and the
    upstream Forgejo checksums (`mise run release:notes`).
@@ -66,7 +67,10 @@ refreshes it, so its version keeps matching what a squash merge will produce.
 Check the linked Forgejo release notes before merging: Forgejo sometimes
 advises against upgrading to a release.
 
-PRs created with the workflow's own token don't start other workflows, so CI
-only runs on the update PR automatically when the `FORGEJO_UPDATE_TOKEN`
-secret is set (see [Repository settings](repository-settings.md)). Without
-it, close and reopen the PR to start CI.
+PRs created with the workflow's own token don't start other workflows, so the
+job pushes and opens the PR with the `FORGEJO_UPDATE_TOKEN` secret (see
+[Repository settings](repository-settings.md)), available only to that step.
+Without a valid token the job fails, so an expired token shows up as a red run.
+
+Closing an update PR skips that update until the proposed change differs, for
+example when a newer Forgejo release comes out or `main` moves on.

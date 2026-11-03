@@ -17,21 +17,20 @@ jobs:
   update:
     name: Check for a new Forgejo release
     runs-on: ubuntu-latest
+    # Writes go through FORGEJO_UPDATE_TOKEN, because PRs created with
+    # GITHUB_TOKEN don't start CI. Only the step that pushes and opens the PR
+    # gets the token; nothing else in this job can write to the repository.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     env:
       BRANCH: forgejo-update
-      # PRs created with GITHUB_TOKEN don't start workflows, so CI only runs on
-      # the PR when FORGEJO_UPDATE_TOKEN (a fine-grained token) is set.
-      GH_TOKEN: ${{ secrets.FORGEJO_UPDATE_TOKEN || github.token }}
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.FORGEJO_UPDATE_TOKEN || github.token }}
+          persist-credentials: false
 
       - name: Set up mise
         uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
@@ -60,6 +59,7 @@ jobs:
         if: steps.pin.outputs.changed == 'true'
         env:
           CURRENT: ${{ steps.pin.outputs.current }}
+          GH_TOKEN: ${{ secrets.FORGEJO_UPDATE_TOKEN }}
           LATEST: ${{ steps.pin.outputs.latest }}
           VERSION: ${{ steps.pin.outputs.version }}
         run: |
@@ -71,12 +71,23 @@ jobs:
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "${title}"
 
-          # Only push when this differs from what the open PR already proposes
+          # Only push when this differs from what the branch already proposes.
+          # An up-to-date branch is only done with if a PR was opened for that
+          # commit: an earlier run can have pushed it and then failed to open
+          # the PR. A closed PR counts, so closing one skips that update.
           if git fetch -q origin "${BRANCH}" 2> /dev/null && git diff --quiet FETCH_HEAD HEAD; then
-            echo "The ${BRANCH} branch is up to date"
-            exit 0
+            branch_sha=$(git rev-parse FETCH_HEAD)
+            proposed=$(gh pr list --head "${BRANCH}" --state all --json headRefOid \
+              --jq "map(select(.headRefOid == \"${branch_sha}\")) | length")
+            if [[ "${proposed}" != "0" ]]; then
+              echo "The ${BRANCH} branch is up to date"
+              exit 0
+            fi
+            echo "The ${BRANCH} branch has no pull request yet"
+          else
+            git push -q -f \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
           fi
-          git push -q -f origin "HEAD:refs/heads/${BRANCH}"
 
           workflow="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/.github/workflows/forgejo-update.yaml"
           body="Updates Forgejo from ${CURRENT} to ${LATEST} (app version ${VERSION}).
