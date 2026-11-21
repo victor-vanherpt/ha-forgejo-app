@@ -1,5 +1,9 @@
 # Changelog
 
+## 17.0.2-28
+
+- Update Forgejo to [17.0.2](https://codeberg.org/forgejo/forgejo/releases/tag/v17.0.2)
+
 ## 17.0.0-27
 
 - The nightly Forgejo update pushes its branch with the workflow's own short-lived token, and `FORGEJO_UPDATE_TOKEN` only opens the PR, so that token can no longer push or merge
