@@ -1,5 +1,9 @@
 # Changelog
 
+## 17.0.0-27
+
+- The nightly Forgejo update pushes its branch with the workflow's own short-lived token, and `FORGEJO_UPDATE_TOKEN` only opens the PR, so that token can no longer push or merge
+
 ## 17.0.0-26
 
 - The nightly Forgejo update recreates its branch when `main` changed the workflows since the branch was pushed, instead of failing to push it

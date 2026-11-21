@@ -1,7 +1,8 @@
 name: Forgejo update
 
 # Nightly: pin the latest stable Forgejo release on top of main and open a PR,
-# or refresh the open one (e.g. when main moved and the version needs a bump).
+# or replace the open one (e.g. when main moved and the version needs a bump).
+# Nothing here can change main: you merge the PR.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -13,17 +14,23 @@ permissions:
 concurrency:
   group: forgejo-update
 
+env:
+  BRANCH: forgejo-update
+
 jobs:
-  update:
+  pin:
     name: Check for a new Forgejo release
     runs-on: ubuntu-latest
-    # Writes go through FORGEJO_UPDATE_TOKEN, because PRs created with
-    # GITHUB_TOKEN don't start CI. Only the step that pushes and opens the PR
-    # gets the token; nothing else in this job can write to the repository.
+    # Read-only: this job runs third-party tooling (mise, jq, yq).
     permissions:
       contents: read
-    env:
-      BRANCH: forgejo-update
+    outputs:
+      changed: ${{ steps.pin.outputs.changed }}
+      base: ${{ steps.pin.outputs.base }}
+      current: ${{ steps.pin.outputs.current }}
+      latest: ${{ steps.pin.outputs.latest }}
+      version: ${{ steps.pin.outputs.version }}
+      patch: ${{ steps.pin.outputs.patch }}
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,33 +55,60 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          git add -A
           {
             echo "changed=true"
+            echo "base=$(git rev-parse HEAD)"
             echo "current=${current}"
             echo "latest=${latest}"
             echo "version=$(yq '.version' forgejo/config.yaml)"
+            echo "patch=$(git diff --cached --binary | base64 -w0)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Open or refresh the pull request
-        if: steps.pin.outputs.changed == 'true'
+  propose:
+    name: Open the pull request
+    needs: pin
+    if: needs.pin.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    # The job token pushes the update branch; the ruleset on main keeps it off
+    # main. FORGEJO_UPDATE_TOKEN only opens the PR (PRs opened with the job
+    # token don't start CI) and has no Contents permission, so it can't push
+    # or merge. No third-party code runs in this job.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.pin.outputs.base }}
+          persist-credentials: false
+
+      - name: Commit the update
         env:
-          CURRENT: ${{ steps.pin.outputs.current }}
-          GH_TOKEN: ${{ secrets.FORGEJO_UPDATE_TOKEN }}
-          LATEST: ${{ steps.pin.outputs.latest }}
-          VERSION: ${{ steps.pin.outputs.version }}
+          LATEST: ${{ needs.pin.outputs.latest }}
+          PATCH: ${{ needs.pin.outputs.patch }}
         run: |
-          title="Update Forgejo to ${LATEST}"
           git switch -c "${BRANCH}"
-          git add -A
+          base64 -d <<< "${PATCH}" | git apply --index
           git \
             -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q -m "${title}"
+            commit -q -m "Update Forgejo to ${LATEST}"
 
-          # Only push when this differs from what the branch already proposes.
-          # An up-to-date branch is only done with if a PR was opened for that
-          # commit: an earlier run can have pushed it and then failed to open
-          # the PR. A closed PR counts, so closing one skips that update.
+      # Only push when this differs from what the branch already proposes. An
+      # up-to-date branch is only done with if a PR was opened for that commit:
+      # an earlier run can have pushed it and then failed to open the PR. A
+      # closed PR counts, so closing one skips that update.
+      #
+      # A changed branch is deleted and pushed anew rather than force-pushed:
+      # pushes with the job token don't start CI on an open PR, and the job
+      # token may not move a branch across main's workflow changes. Deleting the
+      # branch closes its PR; the next step opens a new one.
+      - name: Push the update branch
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           branch_sha=""
           if git fetch -q origin "${BRANCH}" 2> /dev/null; then
             branch_sha=$(git rev-parse FETCH_HEAD)
@@ -84,22 +118,28 @@ jobs:
               --jq "map(select(.headRefOid == \"${branch_sha}\")) | length")
             if [[ "${proposed}" != "0" ]]; then
               echo "The ${BRANCH} branch is up to date"
+              echo "open=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "The ${BRANCH} branch has no pull request yet"
           else
-            # The token has no Workflows permission, so GitHub refuses to move
-            # the branch across changes to .github/workflows (main changed the
-            # pipeline since the branch was last pushed). Recreate the branch
-            # instead; deleting it closes its PR, and a new one is opened below.
-            if [[ -n "${branch_sha}" ]] && ! git diff --quiet "${branch_sha}" HEAD -- .github/workflows; then
-              echo "main changed the workflows since ${BRANCH} was pushed; recreating it"
+            if [[ -n "${branch_sha}" ]]; then
+              echo "Replacing the outdated ${BRANCH} branch"
               gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}"
             fi
-            git push -q -f \
+            git push -q \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
           fi
+          echo "open=true" >> "$GITHUB_OUTPUT"
 
+      - name: Open the pull request
+        if: steps.push.outputs.open == 'true'
+        env:
+          CURRENT: ${{ needs.pin.outputs.current }}
+          GH_TOKEN: ${{ secrets.FORGEJO_UPDATE_TOKEN }}
+          LATEST: ${{ needs.pin.outputs.latest }}
+          VERSION: ${{ needs.pin.outputs.version }}
+        run: |
           workflow="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/.github/workflows/forgejo-update.yaml"
           body="Updates Forgejo from ${CURRENT} to ${LATEST} (app version ${VERSION}).
 
@@ -107,8 +147,4 @@ jobs:
           merging: Forgejo sometimes advises against upgrading to a release.
 
           Opened by the nightly [Forgejo update](${workflow}) workflow."
-          if [[ -n "$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[].number')" ]]; then
-            gh pr edit "${BRANCH}" --title "${title}" --body "${body}"
-          else
-            gh pr create --base main --head "${BRANCH}" --title "${title}" --body "${body}"
-          fi
+          gh pr create --base main --head "${BRANCH}" --title "Update Forgejo to ${LATEST}" --body "${body}"

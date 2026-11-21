@@ -62,18 +62,25 @@ night (and on demand from the Actions tab). It runs `mise run forgejo:pin` on
 top of `main` and, when a newer stable Forgejo release exists, opens a PR from
 the `forgejo-update` branch with the new version, checksums, app version and
 changelog entry. If that PR is still open when `main` moves on, the next run
-refreshes it, so its version keeps matching what a squash merge will produce.
-If `main` changed anything under `.github/workflows` in the meantime, the run
-deletes and recreates the branch instead, because `FORGEJO_UPDATE_TOKEN` can't
-push workflow changes. That closes the old PR and opens a new one.
+replaces it (deleting the branch closes it) with a new one, so its version keeps
+matching what a squash merge will produce.
 
 Check the linked Forgejo release notes before merging: Forgejo sometimes
 advises against upgrading to a release.
 
-PRs created with the workflow's own token don't start other workflows, so the
-job pushes and opens the PR with the `FORGEJO_UPDATE_TOKEN` secret (see
-[Repository settings](repository-settings.md)), available only to that step.
-Without a valid token the job fails, so an expired token shows up as a red run.
+Nothing in the workflow can change `main`; you merge the PR. The work is split
+so each credential can do only its part:
+
+- **Check for a new Forgejo release** runs mise and the pin task with a
+  read-only token.
+- **Open the pull request** runs no third-party code. Its short-lived job token
+  (Contents write) pushes the `forgejo-update` branch; the ruleset on `main`
+  keeps it off `main`. PRs opened with the job token don't start CI, so the PR
+  is opened with the `FORGEJO_UPDATE_TOKEN` secret (see
+  [Repository settings](repository-settings.md)), which can only manage pull
+  requests: it can't push, and without Contents write it can't merge either.
+  Without a valid token the job fails, so an expired token shows up as a red
+  run.
 
 Closing an update PR skips that update until the proposed change differs, for
 example when a newer Forgejo release comes out or `main` moves on.
