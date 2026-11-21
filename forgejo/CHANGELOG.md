@@ -1,5 +1,9 @@
 # Changelog
 
+## 17.0.0-26
+
+- The nightly Forgejo update recreates its branch when `main` changed the workflows since the branch was pushed, instead of failing to push it
+
 ## 17.0.0-25
 
 - The nightly Forgejo update now opens the pull request when an earlier run pushed the update branch but failed to open it, instead of reporting success
