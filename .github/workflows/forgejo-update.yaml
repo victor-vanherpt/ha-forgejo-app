@@ -75,8 +75,11 @@ jobs:
           # An up-to-date branch is only done with if a PR was opened for that
           # commit: an earlier run can have pushed it and then failed to open
           # the PR. A closed PR counts, so closing one skips that update.
-          if git fetch -q origin "${BRANCH}" 2> /dev/null && git diff --quiet FETCH_HEAD HEAD; then
+          branch_sha=""
+          if git fetch -q origin "${BRANCH}" 2> /dev/null; then
             branch_sha=$(git rev-parse FETCH_HEAD)
+          fi
+          if [[ -n "${branch_sha}" ]] && git diff --quiet "${branch_sha}" HEAD; then
             proposed=$(gh pr list --head "${BRANCH}" --state all --json headRefOid \
               --jq "map(select(.headRefOid == \"${branch_sha}\")) | length")
             if [[ "${proposed}" != "0" ]]; then
@@ -85,6 +88,14 @@ jobs:
             fi
             echo "The ${BRANCH} branch has no pull request yet"
           else
+            # The token has no Workflows permission, so GitHub refuses to move
+            # the branch across changes to .github/workflows (main changed the
+            # pipeline since the branch was last pushed). Recreate the branch
+            # instead; deleting it closes its PR, and a new one is opened below.
+            if [[ -n "${branch_sha}" ]] && ! git diff --quiet "${branch_sha}" HEAD -- .github/workflows; then
+              echo "main changed the workflows since ${BRANCH} was pushed; recreating it"
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}"
+            fi
             git push -q -f \
               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
           fi

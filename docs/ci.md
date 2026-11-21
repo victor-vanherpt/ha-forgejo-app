@@ -63,6 +63,9 @@ top of `main` and, when a newer stable Forgejo release exists, opens a PR from
 the `forgejo-update` branch with the new version, checksums, app version and
 changelog entry. If that PR is still open when `main` moves on, the next run
 refreshes it, so its version keeps matching what a squash merge will produce.
+If `main` changed anything under `.github/workflows` in the meantime, the run
+deletes and recreates the branch instead, because `FORGEJO_UPDATE_TOKEN` can't
+push workflow changes. That closes the old PR and opens a new one.
 
 Check the linked Forgejo release notes before merging: Forgejo sometimes
 advises against upgrading to a release.
